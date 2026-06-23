@@ -1,0 +1,60 @@
+// Prisma schema for the captive portal backend.
+// SQLite for simplicity; swap provider/url for Postgres if desired.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum StudentStatus {
+  PENDING
+  ACTIVE
+  DENIED
+}
+
+model Student {
+  id        String        @id @default(cuid())
+  studentId String        @unique
+  status    StudentStatus @default(PENDING)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  devices   Device[]
+
+  @@index([status])
+}
+
+model Device {
+  id         String   @id @default(cuid())
+  macAddress String   @unique
+  studentId  String
+  student    Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  approved   Boolean  @default(false)
+  reason     String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([studentId])
+  @@index([approved])
+}
+
+model AdminUser {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actor     String
+  action    String
+  target    String?
+  meta      String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
