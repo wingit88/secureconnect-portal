@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -27,6 +26,3 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
 // Force this component to not be statically optimized so getSession() works
 export const dynamic = "force-dynamic";
-
-// Helper unused but kept for symmetry
-export function _redirectIfAnon() { redirect("/admin/login"); }
