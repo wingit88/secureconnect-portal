@@ -22,21 +22,36 @@
 /ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade \
     comment="NAT to internet"
 
-# ---- 4. Bridge with VLAN filtering on ether2 (trunk) --------------------
+# ---- 4. Bridge with VLAN filtering; one access port per VLAN ------------
+# ether2 = VLAN 10 (server), ether3 = VLAN 20 (staff), ether4 = VLAN 30 (students).
+# Each downstream port is an untagged access port; the host device must NOT
+# tag frames. vlan-filtering is enabled at the end of the script.
 /interface bridge add name=bridge-trunk vlan-filtering=no \
     comment="enable vlan-filtering at end"
 /interface bridge port add bridge=bridge-trunk interface=ether2 \
-    pvid=1 frame-types=admit-only-vlan-tagged
+    pvid=10 frame-types=admit-only-untagged-and-priority-tagged \
+    comment="access port: VLAN 10 (server)"
+/interface bridge port add bridge=bridge-trunk interface=ether3 \
+    pvid=20 frame-types=admit-only-untagged-and-priority-tagged \
+    comment="access port: VLAN 20 (staff)"
+/interface bridge port add bridge=bridge-trunk interface=ether4 \
+    pvid=30 frame-types=admit-only-untagged-and-priority-tagged \
+    comment="access port: VLAN 30 (students)"
 
 # ---- 5. VLAN interfaces on the bridge -----------------------------------
 /interface vlan add name=vlan10-server   vlan-id=10 interface=bridge-trunk
 /interface vlan add name=vlan20-staff    vlan-id=20 interface=bridge-trunk
 /interface vlan add name=vlan30-students vlan-id=30 interface=bridge-trunk
 
-# ---- 6. Bridge VLAN table (which VLANs are tagged on which port) -------
-/interface bridge vlan add bridge=bridge-trunk vlan-ids=10 tagged=bridge-trunk,ether2
-/interface bridge vlan add bridge=bridge-trunk vlan-ids=20 tagged=bridge-trunk,ether2
-/interface bridge vlan add bridge=bridge-trunk vlan-ids=30 tagged=bridge-trunk,ether2
+# ---- 6. Bridge VLAN table -----------------------------------------------
+# Router CPU (bridge-trunk) is tagged so the vlanN interfaces work.
+# Each physical port is untagged in exactly one VLAN.
+/interface bridge vlan add bridge=bridge-trunk vlan-ids=10 \
+    tagged=bridge-trunk untagged=ether2
+/interface bridge vlan add bridge=bridge-trunk vlan-ids=20 \
+    tagged=bridge-trunk untagged=ether3
+/interface bridge vlan add bridge=bridge-trunk vlan-ids=30 \
+    tagged=bridge-trunk untagged=ether4
 
 # ---- 7. IP addresses (router-on-a-stick gateways) -----------------------
 /ip address add address=192.168.10.1/24 interface=vlan10-server
