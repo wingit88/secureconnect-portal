@@ -30,16 +30,35 @@ async function getConn(): Promise<RouterOSAPI> {
   try { return await connecting; } finally { connecting = null; }
 }
 
+function isEmptyReplyError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return message.includes("UNKNOWNREPLY") && message.includes("!empty");
+}
+
+function isPrintCommand(words: string[]): boolean {
+  return words[0]?.endsWith("/print") ?? false;
+}
+
 async function run(words: string[]): Promise<unknown[]> {
   const c = await getConn();
   try {
     return await c.write(words);
   } catch (err) {
+    if (isPrintCommand(words) && isEmptyReplyError(err)) {
+      return [];
+    }
     // one retry on a fresh connection
     try { c.close(); } catch {}
     conn = null;
     const c2 = await getConn();
-    return await c2.write(words);
+    try {
+      return await c2.write(words);
+    } catch (retryErr) {
+      if (isPrintCommand(words) && isEmptyReplyError(retryErr)) {
+        return [];
+      }
+      throw retryErr;
+    }
   }
 }
 
