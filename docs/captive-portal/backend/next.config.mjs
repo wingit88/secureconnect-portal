@@ -2,5 +2,11 @@
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  // argon2 and node-routeros are native/Node-only modules. Keep them out
+  // of the webpack bundle so Next loads them at runtime via require().
+  serverExternalPackages: ["argon2", "node-routeros", "source-map-support"],
+  experimental: {
+    serverComponentsExternalPackages: ["argon2", "node-routeros", "source-map-support"],
+  },
 };
 export default nextConfig;
