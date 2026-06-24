@@ -40,6 +40,10 @@ Copy the contents of `docs/captive-portal/backend/` from this repo into
 `/opt/captive-portal/` (rsync, scp, or `git clone`).
 
 ```
+# IMPORTANT: copied files must be writable by the portal user so SQLite can
+# create /opt/captive-portal/prisma/prod.db.
+sudo chown -R portal:portal /opt/captive-portal
+
 # IMPORTANT: install devDependencies too (prisma CLI, tsx, tailwind, typescript)
 sudo -u portal bash -lc 'cd /opt/captive-portal && NODE_ENV=development npm ci --include=dev'
 sudo -u portal cp /opt/captive-portal/.env.example /opt/captive-portal/.env
@@ -56,12 +60,29 @@ openssl rand -base64 48
 
 ```
 cd /opt/captive-portal
+# If you copied files as ubuntu/root after install, fix ownership again before
+# migrating; SQLite needs write access to the prisma/ directory.
+sudo chown -R portal:portal /opt/captive-portal
+
 # Use the LOCAL Prisma 5 binary (not `npx prisma`, which may fetch Prisma 7
 # from the internet and fail with "datasource url is no longer supported").
 sudo -u portal ./node_modules/.bin/prisma migrate deploy
 sudo -u portal ./node_modules/.bin/prisma generate
 sudo -u portal npm run create-admin   # interactive prompts
 ```
+
+If you see `unable to open database file: ./prod.db`, ownership is still wrong
+or the `prisma/` directory is missing:
+
+```
+sudo install -d -o portal -g portal /opt/captive-portal/prisma
+sudo chown -R portal:portal /opt/captive-portal
+sudo -u portal ./node_modules/.bin/prisma migrate deploy
+```
+
+If you see `You defined the enum StudentStatus`, the server still has an older
+`prisma/schema.prisma`. Re-copy the updated backend files from this repo; the
+current SQLite schema stores `Student.status` as a string, not a Prisma enum.
 
 ## 4. Build and bind to port 80
 

@@ -4,34 +4,3 @@ const nextConfig = {
   poweredByHeader: false,
 };
 export default nextConfig;
-*** Add File: docs/captive-portal/backend/postcss.config.mjs
-export default { plugins: { tailwindcss: {}, autoprefixer: {} } };
-*** Add File: docs/captive-portal/backend/tailwind.config.ts
-import type { Config } from "tailwindcss";
-const config: Config = {
-  content: ["./src/**/*.{ts,tsx}"],
-  theme: { extend: {} },
-  plugins: [],
-};
-export default config;
-*** Add File: docs/captive-portal/backend/.env.example
-# Backend listens on :80, accessed at http://192.168.10.2/
-
-# Prisma / SQLite
-DATABASE_URL="file:./prod.db"
-
-# MikroTik RouterOS API
-MIKROTIK_HOST="192.168.10.1"
-MIKROTIK_PORT="8728"
-MIKROTIK_API_USER="portal-api"
-MIKROTIK_API_PASS="REPLACE_ME_API_PASS"
-MIKROTIK_HOTSPOT_PROFILE="student-profile"
-
-# Where to send the client after a successful login if no target captured
-HOTSPOT_GATEWAY_URL="http://192.168.30.1/status"
-
-# iron-session — 32+ chars; openssl rand -base64 48
-SESSION_SECRET="REPLACE_ME_WITH_OPENSSL_RAND_BASE64_48_CHARS_MIN"
-SESSION_COOKIE_NAME="cp_admin"
-
-NODE_ENV="production"
