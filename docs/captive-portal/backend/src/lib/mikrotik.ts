@@ -1,22 +1,22 @@
 // Thin wrapper around node-routeros with automatic reconnect.
 // All MAC inputs MUST already be normalized (lib/mac.ts).
-import { Channel, RouterOSAPI, RosException } from "node-routeros";
 
-const channelProto = Channel.prototype as Channel & {
-  onUnknown?: (reply: string) => void;
+import { RouterOSAPI } from "node-routeros";
+
+// Patch the library to handle !empty gracefully as empty result
+// @ts-ignore - require is available at runtime
+const Channel = require("node-routeros/dist/Channel");
+const origOnUnknown = Channel.prototype.onUnknown;
+Channel.prototype.onUnknown = function (reply: string): void {
+  if (reply === "!empty") {
+    // Treat as empty result: emit done with no data
+    this.emit("done", []);
+    this.close();
+    return;
+  }
+  // Delegate to original handler for actual unknowns
+  if (origOnUnknown) origOnUnknown.call(this, reply);
 };
-
-if (channelProto.onUnknown) {
-  channelProto.onUnknown = function patchedOnUnknown(reply: string): void {
-    if (reply === "!empty") {
-      this.emit("done", []);
-      this.close();
-      return;
-    }
-
-    throw new RosException("UNKNOWNREPLY", { reply });
-  };
-}
 
 let conn: RouterOSAPI | null = null;
 let connecting: Promise<RouterOSAPI> | null = null;
@@ -39,7 +39,15 @@ async function getConn(): Promise<RouterOSAPI> {
     const c = makeClient();
     await c.connect();
     c.on("close", () => { conn = null; });
-    c.on("error", () => { try { c.close(); } catch {} conn = null; });
+    // Handle errors, suppressing !empty as it's a normal response
+    c.on("error", (err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes("!empty")) {
+        console.error("RouterOS connection error:", err);
+      }
+      try { c.close(); } catch {}
+      conn = null;
+    });
     conn = c;
     return c;
   })();
