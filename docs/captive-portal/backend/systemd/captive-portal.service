@@ -9,11 +9,12 @@ User=portal
 Group=portal
 WorkingDirectory=/opt/captive-portal
 EnvironmentFile=/opt/captive-portal/.env
-# Bind to :80 as non-root via capability set on the node binary:
-#   sudo setcap 'cap_net_bind_service=+ep' $(readlink -f $(which node))
 ExecStart=/usr/bin/node node_modules/next/dist/bin/next start -p 80
 Restart=on-failure
 RestartSec=3
+# Allow binding to privileged port :80 as non-root user
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
 ProtectSystem=full
 ProtectHome=true
