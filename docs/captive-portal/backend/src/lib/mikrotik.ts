@@ -1,6 +1,22 @@
 // Thin wrapper around node-routeros with automatic reconnect.
 // All MAC inputs MUST already be normalized (lib/mac.ts).
-import { RouterOSAPI } from "node-routeros";
+import { Channel, RouterOSAPI, RosException } from "node-routeros";
+
+const channelProto = Channel.prototype as Channel & {
+  onUnknown?: (reply: string) => void;
+};
+
+if (channelProto.onUnknown) {
+  channelProto.onUnknown = function patchedOnUnknown(reply: string): void {
+    if (reply === "!empty") {
+      this.emit("done", []);
+      this.close();
+      return;
+    }
+
+    throw new RosException("UNKNOWNREPLY", { reply });
+  };
+}
 
 let conn: RouterOSAPI | null = null;
 let connecting: Promise<RouterOSAPI> | null = null;
