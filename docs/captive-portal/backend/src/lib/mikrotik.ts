@@ -3,23 +3,32 @@
 
 import { RouterOSAPI } from "node-routeros";
 
-// Patch the library to handle !empty gracefully as empty result
-// @ts-ignore - require is available at runtime
-const Channel = require("node-routeros/dist/Channel");
-const origOnUnknown = Channel.prototype.onUnknown;
-Channel.prototype.onUnknown = function (reply: string): void {
-  if (reply === "!empty") {
-    // Treat as empty result: emit done with no data
-    this.emit("done", []);
-    this.close();
-    return;
-  }
-  // Delegate to original handler for actual unknowns
-  if (origOnUnknown) origOnUnknown.call(this, reply);
-};
-
 let conn: RouterOSAPI | null = null;
 let connecting: Promise<RouterOSAPI> | null = null;
+let patchApplied = false;
+
+// Apply the !empty patch once when first needed
+function applyEmptyPatch(): void {
+  if (patchApplied) return;
+  try {
+    // @ts-ignore - require is available at runtime
+    const Channel = require("node-routeros/dist/Channel");
+    if (Channel?.prototype) {
+      const origOnUnknown = Channel.prototype.onUnknown;
+      Channel.prototype.onUnknown = function (reply: string): void {
+        if (reply === "!empty") {
+          this.emit("done", []);
+          this.close();
+          return;
+        }
+        if (origOnUnknown) origOnUnknown.call(this, reply);
+      };
+    }
+    patchApplied = true;
+  } catch (e) {
+    console.warn("Failed to apply node-routeros patch:", e);
+  }
+}
 
 function makeClient(): RouterOSAPI {
   return new RouterOSAPI({
@@ -33,6 +42,7 @@ function makeClient(): RouterOSAPI {
 }
 
 async function getConn(): Promise<RouterOSAPI> {
+  applyEmptyPatch();
   if (conn && conn.connected) return conn;
   if (connecting) return connecting;
   connecting = (async () => {
