@@ -40,7 +40,8 @@ Copy the contents of `docs/captive-portal/backend/` from this repo into
 `/opt/captive-portal/` (rsync, scp, or `git clone`).
 
 ```
-sudo -u portal bash -lc 'cd /opt/captive-portal && npm ci'
+# IMPORTANT: install devDependencies too (prisma CLI, tsx, tailwind, typescript)
+sudo -u portal bash -lc 'cd /opt/captive-portal && NODE_ENV=development npm ci --include=dev'
 sudo -u portal cp /opt/captive-portal/.env.example /opt/captive-portal/.env
 sudo -u portal nano /opt/captive-portal/.env   # fill secrets
 ```
@@ -55,8 +56,10 @@ openssl rand -base64 48
 
 ```
 cd /opt/captive-portal
-sudo -u portal npx prisma migrate deploy
-sudo -u portal npx prisma generate
+# Use the LOCAL Prisma 5 binary (not `npx prisma`, which may fetch Prisma 7
+# from the internet and fail with "datasource url is no longer supported").
+sudo -u portal ./node_modules/.bin/prisma migrate deploy
+sudo -u portal ./node_modules/.bin/prisma generate
 sudo -u portal npm run create-admin   # interactive prompts
 ```
 
