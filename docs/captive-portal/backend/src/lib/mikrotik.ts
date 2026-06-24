@@ -12,14 +12,31 @@ function applyEmptyPatch(): void {
   if (patchApplied) return;
   try {
     // @ts-ignore - require is available at runtime
-    const Channel = require("node-routeros/dist/Channel");
-    if (Channel?.prototype) {
+    // Try a few ways to import the Channel class since packaging can vary.
+    let mod: any;
+    try {
+      mod = require("node-routeros/dist/Channel");
+    } catch (_) {
+      try {
+        // Fallback: import package root and look for Channel export
+        const root = require("node-routeros");
+        mod = root?.Channel || root?.default?.Channel || root?.dist?.Channel;
+      } catch (e) {
+        mod = undefined;
+      }
+    }
+    const Channel = mod?.default ?? mod;
+    if (Channel && Channel.prototype) {
       const origOnUnknown = Channel.prototype.onUnknown;
       Channel.prototype.onUnknown = function (reply: string): void {
-        if (reply === "!empty") {
-          this.emit("done", []);
-          this.close();
-          return;
+        try {
+          if (reply === "!empty") {
+            this.emit("done", []);
+            this.close();
+            return;
+          }
+        } catch (_e) {
+          // ignore patch runtime errors
         }
         if (origOnUnknown) origOnUnknown.call(this, reply);
       };
@@ -29,6 +46,10 @@ function applyEmptyPatch(): void {
     console.warn("Failed to apply node-routeros patch:", e);
   }
 }
+
+// Attempt to apply the patch eagerly at module load so Channel is patched
+// before any RouterOS work happens (packagers/bundlers may load Channel early).
+applyEmptyPatch();
 
 function makeClient(): RouterOSAPI {
   return new RouterOSAPI({
