@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getIronSession } from "iron-session";
-import { sessionOptions, type AdminSession } from "@/lib/auth";
+import { sessionOptions, type AdminSession } from "@/lib/session";
 
 export const config = {
   matcher: ["/admin/:path*", "/api/admin/:path*"],
