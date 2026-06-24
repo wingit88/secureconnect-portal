@@ -10,16 +10,11 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum StudentStatus {
-  PENDING
-  ACTIVE
-  DENIED
-}
-
 model Student {
   id        String        @id @default(cuid())
   studentId String        @unique
-  status    StudentStatus @default(PENDING)
+  // SQLite has no enum support. Allowed values: "PENDING" | "ACTIVE" | "DENIED".
+  status    String        @default("PENDING")
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
   devices   Device[]
