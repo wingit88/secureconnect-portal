@@ -1,30 +1,8 @@
 import { cookies } from "next/headers";
-import { getIronSession, type SessionOptions } from "iron-session";
-import argon2 from "argon2";
+import { getIronSession } from "iron-session";
+import { sessionOptions, type AdminSession } from "./session";
 
-export type AdminSession = {
-  adminId?: string;
-  email?: string;
-  loggedInAt?: number;
-};
-
-function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing required env var: ${name}`);
-  return v;
-}
-
-export const sessionOptions: SessionOptions = {
-  password: requireEnv("SESSION_SECRET"),
-  cookieName: process.env.SESSION_COOKIE_NAME ?? "cp_admin",
-  cookieOptions: {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production" && process.env.FORCE_HTTPS === "1",
-    path: "/",
-    maxAge: 60 * 60 * 8, // 8h sliding
-  },
-};
+export type { AdminSession } from "./session";
 
 export async function getSession(): Promise<AdminSession & { save(): Promise<void>; destroy(): Promise<void> }> {
   // @ts-expect-error iron-session typing for cookies()
@@ -37,5 +15,23 @@ export async function requireAdmin() {
   return s;
 }
 
-export const hash = (pw: string) => argon2.hash(pw, { type: argon2.argon2id });
-export const verify = (h: string, pw: string) => argon2.verify(h, pw);
+type Argon2Like = {
+  argon2id: number;
+  hash(password: string, options?: { type?: number }): Promise<string>;
+  verify(hash: string, password: string): Promise<boolean>;
+};
+
+async function loadArgon2(): Promise<Argon2Like> {
+  const mod = await import("argon2");
+  return ((mod as unknown as { default?: Argon2Like }).default ?? mod) as Argon2Like;
+}
+
+export async function hash(pw: string) {
+  const argon2 = await loadArgon2();
+  return argon2.hash(pw, { type: argon2.argon2id });
+}
+
+export async function verify(h: string, pw: string) {
+  const argon2 = await loadArgon2();
+  return argon2.verify(h, pw);
+}
