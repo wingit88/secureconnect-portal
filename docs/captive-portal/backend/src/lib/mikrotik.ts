@@ -1,6 +1,7 @@
 // Thin wrapper around node-routeros with automatic reconnect.
 // All MAC inputs MUST already be normalized (lib/mac.ts).
 
+import "@/lib/mikrotik-patch";
 import { RouterOSAPI } from "node-routeros";
 
 let conn: RouterOSAPI | null = null;
@@ -12,15 +13,13 @@ function applyEmptyPatch(): void {
   if (patchApplied) return;
   try {
     // @ts-ignore - require is available at runtime
-    // Try a few ways to import the Channel class since packaging can vary.
     let mod: any;
     try {
       mod = require("node-routeros/dist/Channel");
     } catch (_) {
       try {
-        // Fallback: import package root and look for Channel export
         const root = require("node-routeros");
-        mod = root?.Channel || root?.default?.Channel || root?.dist?.Channel;
+        mod = root?.Channel || root?.default?.Channel || root?.dist?.Channel || root?.default;
       } catch (e) {
         mod = undefined;
       }

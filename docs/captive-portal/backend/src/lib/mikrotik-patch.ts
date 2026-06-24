@@ -14,12 +14,18 @@ function applyEmptyPatch(): void {
     } catch (_) {
       try {
         const root = require("node-routeros");
-        mod = root?.Channel || root?.default?.Channel || root?.dist?.Channel || root?.default;
+        mod = root;
       } catch (e) {
         mod = undefined;
       }
     }
-    const Channel = mod?.default ?? mod;
+
+    const Channel =
+      (mod && typeof mod === "function" ? mod : undefined) ||
+      (mod?.Channel && typeof mod.Channel === "function" ? mod.Channel : undefined) ||
+      (mod?.default && typeof mod.default === "function" ? mod.default : undefined) ||
+      (mod?.default?.Channel && typeof mod.default.Channel === "function" ? mod.default.Channel : undefined) ||
+      (mod?.dist?.Channel && typeof mod.dist.Channel === "function" ? mod.dist.Channel : undefined);
     if (!Channel || !Channel.prototype) return;
 
     const origOnUnknown = Channel.prototype.onUnknown;
