@@ -74,6 +74,7 @@ export default function StudentsPage() {
                   {s.status !== "DENIED" && (
                     <button onClick={() => confirm(`Revoke ${s.studentId}?`) && act("/api/admin/revoke", { studentId: s.studentId })} className="px-2 py-1 text-xs bg-red-600 text-white rounded">Revoke</button>
                   )}
+                  <button onClick={() => confirm(`Delete ${s.studentId} and all bound devices?`) && act("/api/admin/delete-student", { studentId: s.studentId })} className="px-2 py-1 text-xs bg-rose-700 text-white rounded">Delete</button>
                   {s.status === "PENDING" && (
                     <button onClick={() => act("/api/admin/deny-student", { studentId: s.studentId })} className="px-2 py-1 text-xs bg-slate-700 text-white rounded">Deny</button>
                   )}

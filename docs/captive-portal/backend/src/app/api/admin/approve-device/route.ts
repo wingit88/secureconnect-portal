@@ -25,19 +25,21 @@ export async function POST(req: NextRequest) {
   const siblings = await db.device.count({ where: { studentId: device.studentId, approved: true } });
   const username = siblings === 0 ? device.student.studentId : `${device.student.studentId}#${siblings + 1}`;
 
-  try {
-    await addHotspotUser(username, mac);
-  } catch (err) {
-    console.error("approve-device addHotspotUser failed", err);
-    return new NextResponse("Router error", { status: 502 });
-  }
-
   await db.device.update({
     where: { id: device.id },
     data: { approved: true, reason: null },
   });
 
-  // try to log in immediately if device is online — no IP stored, best-effort skip
   await db.auditLog.create({ data: { actor: session.email!, action: "device.approve", target: mac, meta: device.student.studentId } });
+
+  // Keep the admin response fast; RouterOS sync can lag without blocking the UI.
+  void addHotspotUser(username, mac).catch(async (err) => {
+    console.error("approve-device addHotspotUser failed", err);
+    await db.device.update({
+      where: { id: device.id },
+      data: { approved: false, reason: "router-bind-failed" },
+    }).catch(() => {});
+  });
+
   return NextResponse.json({ ok: true, username });
 }

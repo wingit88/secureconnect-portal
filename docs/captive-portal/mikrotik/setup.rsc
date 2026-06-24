@@ -10,7 +10,7 @@
 
 # ---- 1. Identity & admin password ---------------------------------------
 /system identity set name=school-edge
-/user set admin password=REPLACE_ME_ADMIN_PASS
+/user set admin password=admin32
 
 # ---- 2. Disable unused services -----------------------------------------
 /ip service disable telnet,ftp,www-ssl,api-ssl
@@ -132,7 +132,7 @@ add chain=forward action=drop   in-interface=vlan20-staff    out-interface=vlan3
 /ip service set api address=192.168.10.0/24 disabled=no port=8728
 
 /user group add name=portal-api policy=api,read,write,policy,test,sensitive
-/user add name=portal-api group=portal-api password=REPLACE_ME_API_PASS \
+/user add name=portal-api group=portal-api password=mikroapi \
     address=192.168.10.0/24 comment="captive portal backend"
 
 # ---- 14. Verification ---------------------------------------------------
