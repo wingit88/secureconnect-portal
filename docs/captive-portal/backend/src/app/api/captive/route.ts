@@ -39,6 +39,10 @@ export async function GET(req: NextRequest) {
     <p>Enter your Student ID to access the internet.</p>
     <label for="studentId">Student ID</label>
     <input id="studentId" name="studentId" type="text" required autofocus pattern="[A-Za-z0-9_-]+" maxlength="64">
+    <label for="nama">Nama</label>
+    <input id="nama" name="nama" type="text" maxlength="128">
+    <label for="kelas">Kelas</label>
+    <input id="kelas" name="kelas" type="text" maxlength="64">
     <input type="hidden" name="mac" value="${esc(mac)}">
     <input type="hidden" name="ip" value="${esc(ip)}">
     <input type="hidden" name="target" value="${esc(target)}">

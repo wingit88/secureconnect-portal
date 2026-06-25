@@ -11,13 +11,16 @@ datasource db {
 }
 
 model Student {
-  id        String        @id @default(cuid())
-  studentId String        @unique
+  id             String        @id @default(cuid())
+  studentId      String        @unique
+  nama           String?
+  kelas          String?
+  speedLimitKbps Int?
   // SQLite has no enum support. Allowed values: "PENDING" | "ACTIVE" | "DENIED".
-  status    String        @default("PENDING")
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
-  devices   Device[]
+  status         String        @default("PENDING")
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  devices        Device[]
 
   @@index([status])
 }
@@ -41,6 +44,11 @@ model AdminUser {
   email        String   @unique
   passwordHash String
   createdAt    DateTime @default(now())
+}
+
+model PortalConfig {
+  key   String @id
+  value String?
 }
 
 model AuditLog {

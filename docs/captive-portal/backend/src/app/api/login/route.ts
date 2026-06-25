@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { normalize } from "@/lib/mac";
 import { loginSchema } from "@/lib/validators";
 import { take } from "@/lib/rateLimit";
+import { getPortalConfig } from "@/lib/portalConfig";
 import {
   addHotspotUser,
   loginUser as mtLogin,
@@ -53,7 +54,7 @@ export async function POST(req: NextRequest) {
   const parsed = loginSchema.safeParse(raw);
   if (!parsed.success) return page("Invalid request", parsed.error.issues[0]?.message ?? "Bad input", 400);
 
-  const { studentId, ip, target, reason } = parsed.data;
+  const { studentId, nama, kelas, ip, target, reason } = parsed.data;
   let mac: string;
   try { mac = normalize(parsed.data.mac); }
   catch { return page("Invalid request", "Bad MAC address", 400); }
@@ -68,7 +69,7 @@ export async function POST(req: NextRequest) {
   // 1) Unknown student -> create PENDING + record device unapproved
   if (!student) {
     const created = await db.student.create({
-      data: { studentId, status: "PENDING" },
+      data: { studentId, nama: nama ?? null, kelas: kelas ?? null, status: "PENDING" },
     });
     await db.device.upsert({
       where: { macAddress: mac },
@@ -92,8 +93,25 @@ export async function POST(req: NextRequest) {
   }
 
   // 4) ACTIVE
-  const existingForMac = student.devices.find((d) => d.macAddress === mac);
-  const successUrl = target && /^https?:\/\//i.test(target) ? target : (process.env.HOTSPOT_GATEWAY_URL ?? "http://192.168.30.1/status");
+  const portalConfig = await getPortalConfig();
+  const requestedTarget = target && /^https?:\/\//i.test(target) ? target : "";
+  if (requestedTarget && portalConfig.urlFilterMode !== "disabled") {
+    const normalizedTarget = requestedTarget.toLowerCase();
+    if (
+      portalConfig.urlFilterMode === "blacklist" &&
+      portalConfig.urlBlacklist.some((entry) => normalizedTarget.includes(entry.toLowerCase()))
+    ) {
+      return page("Blocked URL", "<p>The destination you requested is blocked by portal policy.</p>", 403);
+    }
+    if (
+      portalConfig.urlFilterMode === "whitelist" &&
+      !portalConfig.urlWhitelist.some((entry) => normalizedTarget.includes(entry.toLowerCase()))
+    ) {
+      return page("Blocked URL", "<p>The destination you requested is not permitted by portal policy.</p>", 403);
+    }
+  }
+
+  const successUrl = requestedTarget || (process.env.HOTSPOT_GATEWAY_URL ?? "http://192.168.30.1/status");
 
   // 4a) This MAC already bound & approved -> log in
   if (existingForMac && existingForMac.approved) {
@@ -104,13 +122,14 @@ export async function POST(req: NextRequest) {
 
   // 4b) No devices bound yet -> bind this MAC, add static MAC user, log in
   if (student.devices.length === 0) {
+    await db.student.update({ where: { id: student.id }, data: { nama: nama ?? student.nama, kelas: kelas ?? student.kelas } });
     await db.device.upsert({
       where: { macAddress: mac },
       update: { studentId: student.id, approved: true, reason: null },
       create: { macAddress: mac, studentId: student.id, approved: true },
     });
     try {
-      await addHotspotUser(studentId, mac);
+      await addHotspotUser(studentId, mac, student.speedLimitKbps ?? undefined);
       await mtLogin(studentId, mac, ip);
     } catch (err) {
       console.error("mikrotik bind failed", err);

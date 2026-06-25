@@ -84,9 +84,40 @@ async function getConn(): Promise<RouterOSAPI> {
   try { return await connecting; } finally { connecting = null; }
 }
 
+function buildRateLimitArg(speedLimitKbps?: number): string | undefined {
+  if (!speedLimitKbps || speedLimitKbps <= 0) return undefined;
+  return `=rate-limit=${speedLimitKbps}k/${speedLimitKbps}k`;
+}
+
+export type ActiveSession = {
+  id: string;
+  user: string;
+  macAddress: string;
+  address?: string;
+  uptime?: string;
+};
+
+export async function listActiveSessions(): Promise<ActiveSession[]> {
+  const res = (await run(["/ip/hotspot/active/print"])) as Array<Record<string, string>>;
+  return res.map((row) => ({
+    id: row[".id"] ?? "",
+    user: row.user ?? "",
+    macAddress: row["mac-address"] ?? "",
+    address: row.address,
+    uptime: row.uptime,
+  }));
+}
+
 function isEmptyReplyError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
-  return message.includes("UNKNOWNREPLY") && message.includes("!empty");
+  const lower = message.toLowerCase();
+  if (!lower.includes("!empty")) return false;
+  return (
+    lower.includes("unknownreply") ||
+    lower.includes("unknown reply") ||
+    lower.includes("tried to process") ||
+    lower.includes("no data")
+  );
 }
 
 function isPrintCommand(words: string[]): boolean {
@@ -131,26 +162,31 @@ async function findActiveByMac(mac: string): Promise<{ ".id": string } | null> {
 }
 
 /** Permanent MAC-authenticated hotspot user. Idempotent. */
-export async function addHotspotUser(username: string, mac: string): Promise<void> {
+export async function addHotspotUser(username: string, mac: string, speedLimitKbps?: number): Promise<void> {
   const existing = await findUserByName(username);
+  const rateLimitArg = buildRateLimitArg(speedLimitKbps);
   if (existing) {
-    await run([
+    const args = [
       "/ip/hotspot/user/set",
       `=.id=${existing[".id"]}`,
       `=mac-address=${mac}`,
       `=profile=${profile()}`,
       `=password=`,
-    ]);
+    ];
+    if (rateLimitArg) args.push(rateLimitArg);
+    await run(args);
     return;
   }
-  await run([
+  const args = [
     "/ip/hotspot/user/add",
     `=name=${username}`,
     `=mac-address=${mac}`,
     `=profile=${profile()}`,
     `=password=`,
     `=comment=captive-portal`,
-  ]);
+  ];
+  if (rateLimitArg) args.push(rateLimitArg);
+  await run(args);
 }
 
 /** Remove the hotspot user by name. No-op if missing. */

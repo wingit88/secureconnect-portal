@@ -4,28 +4,48 @@
 // so the Channel.prototype.onUnknown handler is replaced before any
 // RouterOS connection is established by other modules.
 
+import { createRequire } from "module";
+const requireModule = createRequire(import.meta.url);
+
 function applyEmptyPatch(): void {
   try {
-    // Try a few ways to locate the Channel class across packaging shapes.
-    // @ts-ignore
-    let mod: any;
+    const channelCandidates: Array<unknown> = [];
+
     try {
-      mod = require("node-routeros/dist/Channel");
-    } catch (_) {
-      try {
-        const root = require("node-routeros");
-        mod = root;
-      } catch (e) {
-        mod = undefined;
+      channelCandidates.push(requireModule("node-routeros/dist/Channel"));
+    } catch {
+      // ignore
+    }
+
+    try {
+      const root = requireModule("node-routeros");
+      channelCandidates.push(root);
+      channelCandidates.push((root as any)?.Channel);
+      channelCandidates.push((root as any)?.default);
+      channelCandidates.push((root as any)?.default?.Channel);
+      channelCandidates.push((root as any)?.dist?.Channel);
+    } catch {
+      // ignore
+    }
+
+    let Channel: any = undefined;
+    for (const candidate of channelCandidates) {
+      if (typeof candidate === "function") {
+        Channel = candidate;
+        break;
+      }
+      if (candidate && typeof candidate === "object") {
+        if (typeof (candidate as any).Channel === "function") {
+          Channel = (candidate as any).Channel;
+          break;
+        }
+        if (typeof (candidate as any).default === "function") {
+          Channel = (candidate as any).default;
+          break;
+        }
       }
     }
 
-    const Channel =
-      (mod && typeof mod === "function" ? mod : undefined) ||
-      (mod?.Channel && typeof mod.Channel === "function" ? mod.Channel : undefined) ||
-      (mod?.default && typeof mod.default === "function" ? mod.default : undefined) ||
-      (mod?.default?.Channel && typeof mod.default.Channel === "function" ? mod.default.Channel : undefined) ||
-      (mod?.dist?.Channel && typeof mod.dist.Channel === "function" ? mod.dist.Channel : undefined);
     if (!Channel || !Channel.prototype) return;
 
     const origOnUnknown = Channel.prototype.onUnknown;
@@ -36,14 +56,13 @@ function applyEmptyPatch(): void {
           try { this.close(); } catch {}
           return;
         }
-      } catch (_e) {
+      } catch {
         // swallow
       }
       if (origOnUnknown) origOnUnknown.call(this, reply);
     };
-  } catch (e) {
-    // Intentionally silent; we'll log where appropriate elsewhere.
-    // Avoid throwing during server startup.
+  } catch {
+    // Intentionally silent; avoid throwing during server startup.
   }
 }
 

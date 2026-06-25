@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
   await db.auditLog.create({ data: { actor: session.email!, action: "device.approve", target: mac, meta: device.student.studentId } });
 
   // Keep the admin response fast; RouterOS sync can lag without blocking the UI.
-  void addHotspotUser(username, mac).catch(async (err) => {
+  void addHotspotUser(username, mac, device.student.speedLimitKbps ?? undefined).catch(async (err) => {
     console.error("approve-device addHotspotUser failed", err);
     await db.device.update({
       where: { id: device.id },
