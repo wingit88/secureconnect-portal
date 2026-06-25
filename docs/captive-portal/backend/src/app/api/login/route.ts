@@ -113,6 +113,8 @@ export async function POST(req: NextRequest) {
 
   const successUrl = requestedTarget || (process.env.HOTSPOT_GATEWAY_URL ?? "http://192.168.30.1/status");
 
+  const existingForMac = student.devices.find((d) => d.macAddress === mac);
+
   // 4a) This MAC already bound & approved -> log in
   if (existingForMac && existingForMac.approved) {
     try { await mtLogin(studentId, mac, ip); }
