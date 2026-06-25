@@ -34,13 +34,14 @@ export default async function SettingsPage() {
     if (!parsed.success) throw new Error("Invalid input");
 
     try {
+      const mode = parsed.data.urlFilterMode ?? "disabled";
       await setPortalConfig({
-        urlFilterMode: parsed.data.urlFilterMode,
+        urlFilterMode: mode,
         urlBlacklist: parseLines(parsed.data.urlBlacklist),
         urlWhitelist: parseLines(parsed.data.urlWhitelist),
       });
       await syncUrlFilter({
-        urlFilterMode: parsed.data.urlFilterMode,
+        urlFilterMode: mode,
         urlBlacklist: parseLines(parsed.data.urlBlacklist) ?? [],
         urlWhitelist: parseLines(parsed.data.urlWhitelist) ?? [],
       });
