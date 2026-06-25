@@ -111,7 +111,8 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const successUrl = requestedTarget || (process.env.HOTSPOT_GATEWAY_URL ?? "http://192.168.30.1/status");
+  const reqHost = req.headers.get("host") || "192.168.30.1";
+  const successUrl = requestedTarget || (process.env.HOTSPOT_GATEWAY_URL ?? `http://${reqHost}/status`);
 
   const existingForMac = student.devices.find((d) => d.macAddress === mac);
 
