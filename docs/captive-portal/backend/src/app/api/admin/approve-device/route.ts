@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { getSession } from "@/lib/auth";
-import { addHotspotUser, loginUser } from "@/lib/mikrotik";
+import { provisionHotspotAccess } from "@/lib/mikrotik";
 import { normalize } from "@/lib/mac";
 
 export const dynamic = "force-dynamic";
@@ -25,21 +25,19 @@ export async function POST(req: NextRequest) {
   const siblings = await db.device.count({ where: { studentId: device.studentId, approved: true } });
   const username = siblings === 0 ? device.student.studentId : `${device.student.studentId}#${siblings + 1}`;
 
+  try {
+    await provisionHotspotAccess(username, mac, device.student.speedLimitKbps ?? undefined);
+  } catch (err) {
+    console.error("approve-device provisionHotspotAccess failed", err);
+    return new NextResponse("Router bind failed", { status: 503 });
+  }
+
   await db.device.update({
     where: { id: device.id },
     data: { approved: true, reason: null },
   });
 
   await db.auditLog.create({ data: { actor: session.email!, action: "device.approve", target: mac, meta: device.student.studentId } });
-
-  // Keep the admin response fast; RouterOS sync can lag without blocking the UI.
-  void addHotspotUser(username, mac, device.student.speedLimitKbps ?? undefined).catch(async (err) => {
-    console.error("approve-device addHotspotUser failed", err);
-    await db.device.update({
-      where: { id: device.id },
-      data: { approved: false, reason: "router-bind-failed" },
-    }).catch(() => {});
-  });
 
   return NextResponse.json({ ok: true, username });
 }

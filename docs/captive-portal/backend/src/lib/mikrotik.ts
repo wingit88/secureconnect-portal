@@ -219,6 +219,39 @@ export async function loginUser(username: string, mac: string, ip: string): Prom
   ]);
 }
 
+/** Best-effort client IP lookup before tearing down an active hotspot session. */
+export async function resolveClientIpByMac(mac: string): Promise<string | null> {
+  const active = (await run(["/ip/hotspot/active/print", `?mac-address=${mac}`])) as Array<Record<string, string>>;
+  if (active[0]?.address) return active[0].address;
+
+  const leases = (await run(["/ip/dhcp-server/lease/print", `?mac-address=${mac}`])) as Array<Record<string, string>>;
+  const bound = leases.find((row) => row.address && row.status !== "expired");
+  if (bound?.address) return bound.address;
+
+  const arp = (await run(["/ip/arp/print", `?mac-address=${mac}`])) as Array<Record<string, string>>;
+  if (arp[0]?.address) return arp[0].address;
+
+  return null;
+}
+
+/**
+ * Add a static MAC user, clear any stale unauthenticated session, and log the
+ * client in when we can resolve its IP. Required after admin approval — adding
+ * the user alone leaves existing captive sessions walled off.
+ */
+export async function provisionHotspotAccess(
+  username: string,
+  mac: string,
+  speedLimitKbps?: number,
+): Promise<void> {
+  const ip = await resolveClientIpByMac(mac);
+  await addHotspotUser(username, mac, speedLimitKbps);
+  await disconnectByMac(mac);
+  if (ip) {
+    await loginUser(username, mac, ip);
+  }
+}
+
 /** Disconnect any active session for a given MAC. */
 export async function disconnectByMac(mac: string): Promise<void> {
   const a = await findActiveByMac(mac);

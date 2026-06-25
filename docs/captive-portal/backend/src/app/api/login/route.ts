@@ -5,9 +5,10 @@ import { loginSchema } from "@/lib/validators";
 import { take } from "@/lib/rateLimit";
 import { getPortalConfig } from "@/lib/portalConfig";
 import {
-  addHotspotUser,
+  disconnectByMac,
   getHotspotUsernameByMac,
   loginUser as mtLogin,
+  provisionHotspotAccess,
 } from "@/lib/mikrotik";
 
 export const dynamic = "force-dynamic";
@@ -121,6 +122,7 @@ export async function POST(req: NextRequest) {
   if (existingForMac && existingForMac.approved) {
     try {
       const username = (await getHotspotUsernameByMac(mac)) ?? studentId;
+      await disconnectByMac(mac);
       await mtLogin(username, mac, ip);
     } catch (err) {
       console.error("hotspot login failed", err); /* fall through; static MAC user should pick it up next probe */ }
@@ -136,8 +138,7 @@ export async function POST(req: NextRequest) {
       create: { macAddress: mac, studentId: student.id, approved: true },
     });
     try {
-      await addHotspotUser(studentId, mac, student.speedLimitKbps ?? undefined);
-      await mtLogin(studentId, mac, ip);
+      await provisionHotspotAccess(studentId, mac, student.speedLimitKbps ?? undefined);
     } catch (err) {
       console.error("mikrotik bind failed", err);
       // roll back so admin can retry approval
