@@ -344,6 +344,16 @@ export async function reconcileRouterSyncState(): Promise<void> {
 
 export function startRouterSyncWorker(): void {
   if (workerStarted) return;
+  // Do NOT start the worker during `next build`. The build runner executes
+  // server modules to collect page data, but there is no live MikroTik
+  // connection available (and any attempt will throw UNREGISTEREDTAG and
+  // crash the build worker process).
+  //
+  // NEXT_PHASE is set to "phase-production-build" by Next.js during `next build`.
+  // NEXT_RUNTIME is "nodejs" or "edge" only inside a real server runtime.
+  const isBuildPhase = process.env.NEXT_PHASE === "phase-production-build";
+  if (isBuildPhase) return;
+
   workerStarted = true;
   void drainRouterSyncQueue();
   setInterval(() => {
