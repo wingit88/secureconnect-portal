@@ -7,9 +7,6 @@ import { RouterOSAPI } from "node-routeros";
 let conn: RouterOSAPI | null = null;
 let connecting: Promise<RouterOSAPI> | null = null;
 let patchApplied = false;
-let writeQueue: Promise<unknown> = Promise.resolve();
-const RETRYABLE_ERROR_CODES = ["SOCKTMOUT", "ECONNRESET", "EPIPE", "ETIMEDOUT", "UNREGISTEREDTAG"];
-const MAX_ATTEMPTS = 3;
 
 // Apply the !empty patch once when first needed
 function applyEmptyPatch(): void {
@@ -59,7 +56,7 @@ function makeClient(): RouterOSAPI {
     port: Number(process.env.MIKROTIK_PORT ?? 8728),
     user: process.env.MIKROTIK_API_USER!,
     password: process.env.MIKROTIK_API_PASS!,
-    timeout: 15,
+    timeout: 8,
     keepalive: true,
   });
 }
@@ -72,14 +69,14 @@ async function getConn(): Promise<RouterOSAPI> {
     const c = makeClient();
     await c.connect();
     c.on("close", () => { conn = null; });
-    // Log and allow next command to reconnect if needed.
-    // Suppress !empty and UNREGISTEREDTAG — both are handled by mikrotik-patch.ts
-    // and are not real errors (they are a known RouterOS API quirk).
+    // Handle errors, suppressing !empty as it's a normal response
     c.on("error", (err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
-      const errno = (err as any)?.errno as string | undefined;
-      if (msg.includes("!empty") || errno === "UNREGISTEREDTAG") return;
-      console.error("RouterOS connection error:", err);
+      if (!msg.includes("!empty")) {
+        console.error("RouterOS connection error:", err);
+      }
+      try { c.close(); } catch {}
+      conn = null;
     });
     conn = c;
     return c;
@@ -87,40 +84,9 @@ async function getConn(): Promise<RouterOSAPI> {
   try { return await connecting; } finally { connecting = null; }
 }
 
-function buildRateLimitArg(speedLimitKbps?: number): string | undefined {
-  if (!speedLimitKbps || speedLimitKbps <= 0) return undefined;
-  return `=rate-limit=${speedLimitKbps}k/${speedLimitKbps}k`;
-}
-
-export type ActiveSession = {
-  id: string;
-  user: string;
-  macAddress: string;
-  address?: string;
-  uptime?: string;
-};
-
-export async function listActiveSessions(): Promise<ActiveSession[]> {
-  const res = (await run(["/ip/hotspot/active/print"])) as Array<Record<string, string>>;
-  return res.map((row) => ({
-    id: row[".id"] ?? "",
-    user: row.user ?? "",
-    macAddress: row["mac-address"] ?? "",
-    address: row.address,
-    uptime: row.uptime,
-  }));
-}
-
 function isEmptyReplyError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
-  const lower = message.toLowerCase();
-  if (!lower.includes("!empty")) return false;
-  return (
-    lower.includes("unknownreply") ||
-    lower.includes("unknown reply") ||
-    lower.includes("tried to process") ||
-    lower.includes("no data")
-  );
+  return message.includes("UNKNOWNREPLY") && message.includes("!empty");
 }
 
 function isPrintCommand(words: string[]): boolean {
@@ -128,52 +94,26 @@ function isPrintCommand(words: string[]): boolean {
 }
 
 async function run(words: string[]): Promise<unknown[]> {
-  const execute = async (): Promise<unknown[]> => runWithRetry(words);
-
-  // RouterOS API library gets unstable under concurrent writes on one socket.
-  // Serialize all commands through a single queue.
-  const runPromise = writeQueue.then(execute, execute);
-  writeQueue = runPromise.then(() => undefined, () => undefined);
-  return runPromise;
-}
-
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function classifyRouterError(err: unknown): { retryable: boolean; code: string } {
-  const msg = err instanceof Error ? err.message : String(err);
-  const anyErr = err as { errno?: string; code?: string } | undefined;
-  const code = String(anyErr?.errno ?? anyErr?.code ?? "");
-  const upper = `${code} ${msg}`.toUpperCase();
-  const retryable = RETRYABLE_ERROR_CODES.some((c) => upper.includes(c));
-  return { retryable, code: code || "UNKNOWN" };
-}
-
-async function writeOnce(words: string[]): Promise<unknown[]> {
   const c = await getConn();
-  return c.write(words);
-}
-
-async function runWithRetry(words: string[]): Promise<unknown[]> {
-  let lastErr: unknown;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+  try {
+    return await c.write(words);
+  } catch (err) {
+    if (isPrintCommand(words) && isEmptyReplyError(err)) {
+      return [];
+    }
+    // one retry on a fresh connection
+    try { c.close(); } catch {}
+    conn = null;
+    const c2 = await getConn();
     try {
-      return await writeOnce(words);
-    } catch (err) {
-      if (isPrintCommand(words) && isEmptyReplyError(err)) {
+      return await c2.write(words);
+    } catch (retryErr) {
+      if (isPrintCommand(words) && isEmptyReplyError(retryErr)) {
         return [];
       }
-      lastErr = err;
-      const { retryable } = classifyRouterError(err);
-      if (!retryable || attempt === MAX_ATTEMPTS) break;
-      try { conn?.close(); } catch {}
-      conn = null;
-      const backoffMs = 200 * Math.pow(2, attempt - 1) + Math.floor(Math.random() * 120);
-      await wait(backoffMs);
+      throw retryErr;
     }
   }
-  throw lastErr;
 }
 
 const profile = () => process.env.MIKROTIK_HOTSPOT_PROFILE ?? "student-profile";
@@ -184,18 +124,6 @@ async function findUserByName(name: string): Promise<{ ".id": string } | null> {
   return res[0] ? ({ ".id": res[0][".id"] }) : null;
 }
 
-/** Find a /ip/hotspot/user by MAC address. */
-async function findUserByMac(mac: string): Promise<{ ".id": string, name?: string } | null> {
-  const res = (await run(["/ip/hotspot/user/print", `?mac-address=${mac}`])) as Array<Record<string, string>>;
-  if (!res[0]) return null;
-  return { ".id": res[0][".id"], name: res[0].name };
-}
-
-export async function getHotspotUsernameByMac(mac: string): Promise<string | null> {
-  const user = await findUserByMac(mac);
-  return user?.name ?? null;
-}
-
 /** Find an active hotspot session by MAC. */
 async function findActiveByMac(mac: string): Promise<{ ".id": string } | null> {
   const res = (await run(["/ip/hotspot/active/print", `?mac-address=${mac}`])) as Array<Record<string, string>>;
@@ -203,31 +131,26 @@ async function findActiveByMac(mac: string): Promise<{ ".id": string } | null> {
 }
 
 /** Permanent MAC-authenticated hotspot user. Idempotent. */
-export async function addHotspotUser(username: string, mac: string, speedLimitKbps?: number): Promise<void> {
+export async function addHotspotUser(username: string, mac: string): Promise<void> {
   const existing = await findUserByName(username);
-  const rateLimitArg = buildRateLimitArg(speedLimitKbps);
   if (existing) {
-    const args = [
+    await run([
       "/ip/hotspot/user/set",
       `=.id=${existing[".id"]}`,
       `=mac-address=${mac}`,
       `=profile=${profile()}`,
       `=password=`,
-    ];
-    if (rateLimitArg) args.push(rateLimitArg);
-    await run(args);
+    ]);
     return;
   }
-  const args = [
+  await run([
     "/ip/hotspot/user/add",
     `=name=${username}`,
     `=mac-address=${mac}`,
     `=profile=${profile()}`,
     `=password=`,
     `=comment=captive-portal`,
-  ];
-  if (rateLimitArg) args.push(rateLimitArg);
-  await run(args);
+  ]);
 }
 
 /** Remove the hotspot user by name. No-op if missing. */
@@ -246,53 +169,6 @@ export async function loginUser(username: string, mac: string, ip: string): Prom
     `=mac-address=${mac}`,
     `=ip=${ip}`,
   ]);
-}
-
-/** Best-effort client IP lookup before tearing down an active hotspot session. */
-export async function resolveClientIpByMac(mac: string): Promise<string | null> {
-  // ARP is typically present even when hotspot auth isn't complete.
-  const arp = (await run(["/ip/arp/print", `?mac-address=${mac}`])) as Array<Record<string, string>>;
-  if (arp[0]?.address) return arp[0].address;
-
-  return null;
-}
-
-/**
- * Add a static MAC user, clear any stale unauthenticated session, and log the
- * client in when we can resolve its IP. Required after admin approval — adding
- * the user alone leaves existing captive sessions walled off.
- */
-export async function provisionHotspotAccess(
-  username: string,
-  mac: string,
-  speedLimitKbps?: number,
-): Promise<void> {
-  // Reliability principle:
-  // Always add/update the static hotspot user first so the admin list reflects reality,
-  // even if resolving IP/login needs to be retried later.
-  await addHotspotUser(username, mac, speedLimitKbps);
-
-  // Best-effort steps: these can legitimately fail/time out if the client is between states.
-  let ip: string | null = null;
-  try {
-    ip = await resolveClientIpByMac(mac);
-  } catch {
-    // ignore; we'll still have the hotspot user added
-  }
-
-  try {
-    await disconnectByMac(mac);
-  } catch {
-    // ignore; client will re-probe or we may reconcile later
-  }
-
-  if (ip) {
-    try {
-      await loginUser(username, mac, ip);
-    } catch {
-      // ignore; if login failed, the device should be authenticated on next probe
-    }
-  }
 }
 
 /** Disconnect any active session for a given MAC. */
@@ -314,78 +190,5 @@ export async function removeAllUsersForStudent(studentId: string): Promise<void>
   const ids = await listHotspotUsersForStudent(studentId);
   for (const id of ids) {
     await run(["/ip/hotspot/user/remove", `=.id=${id}`]);
-  }
-}
-
-/** Remove a hotspot user entry by MAC address if present. */
-export async function removeHotspotUserByMac(mac: string): Promise<void> {
-  const u = await findUserByMac(mac);
-  if (!u) return;
-  await run(["/ip/hotspot/user/remove", `=.id=${u[".id"]}`]);
-}
-
-type UrlFilterMode = "disabled" | "blacklist" | "whitelist";
-
-export type UrlFilterConfig = {
-  urlFilterMode: UrlFilterMode;
-  urlBlacklist: string[];
-  urlWhitelist: string[];
-};
-
-const FILTER_COMMENT = "captive-portal-url-filter";
-const HOTSPOT_VLAN_INTERFACE = process.env.MIKROTIK_HOTSPOT_INTERFACE ?? "vlan30-students";
-
-async function cleanupUrlFilterRules(): Promise<void> {
-  const rules = (await run(["/ip/firewall/filter/print", `?comment=${FILTER_COMMENT}`])) as Array<Record<string, string>>;
-  for (const rule of rules) {
-    if (rule[".id"]) {
-      await run(["/ip/firewall/filter/remove", `=.id=${rule[".id"]}`]);
-    }
-  }
-}
-
-function buildFilterArgs(entry: string, action: "drop" | "accept") {
-  const args = [
-    "/ip/firewall/filter/add",
-    "=chain=forward",
-    `=in-interface=${HOTSPOT_VLAN_INTERFACE}`,
-    "=protocol=tcp",
-    "=dst-port=80,443",
-    `=dst-host=${entry}`,
-    `=action=${action}`,
-    `=comment=${FILTER_COMMENT}`,
-  ];
-  return args;
-}
-
-export async function syncUrlFilter(config: UrlFilterConfig): Promise<void> {
-  await cleanupUrlFilterRules();
-
-  if (config.urlFilterMode === "disabled") {
-    return;
-  }
-
-  if (config.urlFilterMode === "blacklist") {
-    for (const entry of config.urlBlacklist) {
-      if (!entry) continue;
-      await run(buildFilterArgs(entry, "drop"));
-    }
-    return;
-  }
-
-  if (config.urlFilterMode === "whitelist") {
-    for (const entry of config.urlWhitelist) {
-      if (!entry) continue;
-      await run(buildFilterArgs(entry, "accept"));
-    }
-    await run([
-      "/ip/firewall/filter/add",
-      "=chain=forward",
-      `=in-interface=${HOTSPOT_VLAN_INTERFACE}`,
-      "=protocol=tcp",
-      "=dst-port=80,443",
-      "=action=drop",
-      `=comment=${FILTER_COMMENT}`,
-    ]);
   }
 }

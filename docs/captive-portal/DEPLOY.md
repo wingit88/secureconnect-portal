@@ -71,10 +71,6 @@ sudo -u portal ./node_modules/.bin/prisma generate
 sudo -u portal npm run create-admin   # interactive prompts
 ```
 
-After the reliability hardening update, migrations now also create `RouterSyncJob`
-and device sync-state columns. `prisma migrate deploy` must run before restarting
-the service.
-
 If you see `unable to open database file: ./prod.db`, ownership is still wrong
 or the `prisma/` directory is missing:
 
@@ -105,17 +101,6 @@ sudo systemctl enable --now captive-portal
 sudo journalctl -u captive-portal -f
 ```
 
-When redeploying an existing server:
-```
-cd /opt/captive-portal
-sudo chown -R portal:portal /opt/captive-portal
-sudo -u portal bash -lc 'cd /opt/captive-portal && NODE_ENV=development npm ci --include=dev'
-sudo -u portal ./node_modules/.bin/prisma migrate deploy
-sudo -u portal ./node_modules/.bin/prisma generate
-sudo -u portal npm run build
-sudo systemctl restart captive-portal
-```
-
 ## 6. Smoke tests
 
 From the server itself:
@@ -133,12 +118,6 @@ Must return the HTML form (walled garden working).
 Then open `http://neverssl.com` in a browser on that device — the hotspot
 should redirect to the portal. Submit a fake Student ID; admin signs in at
 `http://192.168.10.2/admin/login` and processes the pending registration.
-
-Run reliability smoke checks from the server:
-```
-cd /opt/captive-portal
-sudo -u portal PORTAL_BASE_URL=http://127.0.0.1 npm run smoke:reliability
-```
 
 ## 7. Optional: nginx in front
 

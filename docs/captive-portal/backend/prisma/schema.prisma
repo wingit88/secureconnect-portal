@@ -11,17 +11,13 @@ datasource db {
 }
 
 model Student {
-  id             String        @id @default(cuid())
-  studentId      String        @unique
-  nama           String?
-  kelas          String?
-  speedLimitKbps Int?
+  id        String        @id @default(cuid())
+  studentId String        @unique
   // SQLite has no enum support. Allowed values: "PENDING" | "ACTIVE" | "DENIED".
-  status         String        @default("PENDING")
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-  devices        Device[]
-  syncJobs       RouterSyncJob[]
+  status    String        @default("PENDING")
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  devices   Device[]
 
   @@index([status])
 }
@@ -32,20 +28,12 @@ model Device {
   studentId  String
   student    Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
   approved   Boolean  @default(false)
-  // Sync state values: "PENDING_SYNC" | "SYNCED" | "SYNC_FAILED".
-  syncState     String    @default("PENDING_SYNC")
-  syncAttempts  Int       @default(0)
-  nextRetryAt   DateTime?
-  lastSyncedAt  DateTime?
-  lastSyncError String?
   reason     String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
-  syncJobs   RouterSyncJob[]
 
   @@index([studentId])
   @@index([approved])
-  @@index([syncState, nextRetryAt])
 }
 
 model AdminUser {
@@ -53,11 +41,6 @@ model AdminUser {
   email        String   @unique
   passwordHash String
   createdAt    DateTime @default(now())
-}
-
-model PortalConfig {
-  key   String @id
-  value String?
 }
 
 model AuditLog {
@@ -69,28 +52,4 @@ model AuditLog {
   createdAt DateTime @default(now())
 
   @@index([createdAt])
-}
-
-model RouterSyncJob {
-  id           String   @id @default(cuid())
-  deviceId     String?
-  studentId    String?
-  jobType      String
-  payload      String?
-  status       String   @default("PENDING")
-  attempts     Int      @default(0)
-  nextRetryAt  DateTime?
-  lastError    String?
-  lockId       String?
-  lockedAt     DateTime?
-  processedAt  DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  device Device? @relation(fields: [deviceId], references: [id], onDelete: Cascade)
-  student Student? @relation(fields: [studentId], references: [id], onDelete: Cascade)
-
-  @@index([status, nextRetryAt, createdAt])
-  @@index([deviceId, jobType, status])
-  @@index([studentId, jobType, status])
 }

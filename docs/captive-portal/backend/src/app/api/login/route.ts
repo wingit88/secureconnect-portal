@@ -3,12 +3,9 @@ import { db } from "@/lib/db";
 import { normalize } from "@/lib/mac";
 import { loginSchema } from "@/lib/validators";
 import { take } from "@/lib/rateLimit";
-import { getPortalConfig } from "@/lib/portalConfig";
 import {
-  disconnectByMac,
-  getHotspotUsernameByMac,
+  addHotspotUser,
   loginUser as mtLogin,
-  provisionHotspotAccess,
 } from "@/lib/mikrotik";
 
 export const dynamic = "force-dynamic";
@@ -56,7 +53,7 @@ export async function POST(req: NextRequest) {
   const parsed = loginSchema.safeParse(raw);
   if (!parsed.success) return page("Invalid request", parsed.error.issues[0]?.message ?? "Bad input", 400);
 
-  const { studentId, nama, kelas, ip, target, reason } = parsed.data;
+  const { studentId, ip, target, reason } = parsed.data;
   let mac: string;
   try { mac = normalize(parsed.data.mac); }
   catch { return page("Invalid request", "Bad MAC address", 400); }
@@ -71,7 +68,7 @@ export async function POST(req: NextRequest) {
   // 1) Unknown student -> create PENDING + record device unapproved
   if (!student) {
     const created = await db.student.create({
-      data: { studentId, nama: nama ?? null, kelas: kelas ?? null, status: "PENDING" },
+      data: { studentId, status: "PENDING" },
     });
     await db.device.upsert({
       where: { macAddress: mac },
@@ -95,80 +92,30 @@ export async function POST(req: NextRequest) {
   }
 
   // 4) ACTIVE
-  const portalConfig = await getPortalConfig();
-  const requestedTarget = target && /^https?:\/\//i.test(target) ? target : "";
-  if (requestedTarget && portalConfig.urlFilterMode !== "disabled") {
-    const normalizedTarget = requestedTarget.toLowerCase();
-    if (
-      portalConfig.urlFilterMode === "blacklist" &&
-      portalConfig.urlBlacklist.some((entry) => normalizedTarget.includes(entry.toLowerCase()))
-    ) {
-      return page("Blocked URL", "<p>The destination you requested is blocked by portal policy.</p>", 403);
-    }
-    if (
-      portalConfig.urlFilterMode === "whitelist" &&
-      !portalConfig.urlWhitelist.some((entry) => normalizedTarget.includes(entry.toLowerCase()))
-    ) {
-      return page("Blocked URL", "<p>The destination you requested is not permitted by portal policy.</p>", 403);
-    }
-  }
-
-  const reqHost = req.headers.get("host") || "192.168.30.1";
-  const successUrl = requestedTarget || (process.env.HOTSPOT_GATEWAY_URL ?? `http://${reqHost}/status`);
-
   const existingForMac = student.devices.find((d) => d.macAddress === mac);
+  const successUrl = target && /^https?:\/\//i.test(target) ? target : (process.env.HOTSPOT_GATEWAY_URL ?? "http://192.168.30.1/status");
 
   // 4a) This MAC already bound & approved -> log in
   if (existingForMac && existingForMac.approved) {
-    try {
-      const username = (await getHotspotUsernameByMac(mac)) ?? studentId;
-      await disconnectByMac(mac);
-      await mtLogin(username, mac, ip);
-    } catch (err) {
-      console.error("hotspot login failed", err); /* fall through; static MAC user should pick it up next probe */ }
+    try { await mtLogin(studentId, mac, ip); }
+    catch (err) { console.error("hotspot login failed", err); /* fall through; static MAC user should pick it up next probe */ }
     return NextResponse.redirect(successUrl, { status: 302 });
   }
 
   // 4b) No devices bound yet -> bind this MAC, add static MAC user, log in
   if (student.devices.length === 0) {
-    await db.$transaction(async (tx) => {
-      await tx.student.update({ where: { id: student.id }, data: { nama: nama ?? student.nama, kelas: kelas ?? student.kelas } });
-      await tx.device.upsert({
-        where: { macAddress: mac },
-        update: {
-          studentId: student.id,
-          approved: true,
-          reason: null,
-          syncState: "PENDING_SYNC",
-          syncAttempts: 0,
-          nextRetryAt: null,
-          lastSyncError: null,
-        },
-        create: {
-          macAddress: mac,
-          studentId: student.id,
-          approved: true,
-          syncState: "PENDING_SYNC",
-        },
-      });
+    await db.device.upsert({
+      where: { macAddress: mac },
+      update: { studentId: student.id, approved: true, reason: null },
+      create: { macAddress: mac, studentId: student.id, approved: true },
     });
     try {
-      await provisionHotspotAccess(studentId, mac, student.speedLimitKbps ?? undefined);
-      await db.device.update({
-        where: { macAddress: mac },
-        data: { syncState: "SYNCED", syncAttempts: 0, nextRetryAt: null, lastSyncError: null, lastSyncedAt: new Date() },
-      });
+      await addHotspotUser(studentId, mac);
+      await mtLogin(studentId, mac, ip);
     } catch (err) {
       console.error("mikrotik bind failed", err);
-      await db.device.update({
-        where: { macAddress: mac },
-        data: {
-          syncState: "SYNC_FAILED",
-          syncAttempts: { increment: 1 },
-          nextRetryAt: new Date(Date.now() + 30_000),
-          lastSyncError: err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500),
-        },
-      });
+      // roll back so admin can retry approval
+      await db.device.update({ where: { macAddress: mac }, data: { approved: false, reason: "router-bind-failed" } });
       return page("Network busy", "<p>Couldn't reach the network controller. Please try again in a minute.</p>", 503);
     }
     return NextResponse.redirect(successUrl, { status: 302 });

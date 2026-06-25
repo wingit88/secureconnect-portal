@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 
 type Row = {
   id: string; macAddress: string; reason: string | null; createdAt: string;
-  syncState: string; syncAttempts: number; lastSyncError: string | null;
   student: { studentId: string; status: string };
 };
 
@@ -19,15 +18,7 @@ export default function DevicesPage() {
     const flat: Row[] = [];
     for (const s of data.students) {
       for (const d of s.devices) {
-        if (!d.approved) {
-          flat.push({
-            ...d,
-            syncState: d.syncState ?? "PENDING_SYNC",
-            syncAttempts: typeof d.syncAttempts === "number" ? d.syncAttempts : 0,
-            lastSyncError: d.lastSyncError ?? null,
-            student: { studentId: s.studentId, status: s.status },
-          });
-        }
+        if (!d.approved) flat.push({ ...d, student: { studentId: s.studentId, status: s.status } });
       }
     }
     setRows(flat);
@@ -46,23 +37,16 @@ export default function DevicesPage() {
       <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-left">
-            <tr><th className="p-3">Student</th><th className="p-3">MAC</th><th className="p-3">Reason</th><th className="p-3">Sync</th><th className="p-3">Actions</th></tr>
+            <tr><th className="p-3">Student</th><th className="p-3">MAC</th><th className="p-3">Reason</th><th className="p-3">Actions</th></tr>
           </thead>
           <tbody>
-            {busy && <tr><td colSpan={5} className="p-4 text-slate-500">Loading…</td></tr>}
-            {!busy && rows.length === 0 && <tr><td colSpan={5} className="p-4 text-slate-500">No pending requests.</td></tr>}
+            {busy && <tr><td colSpan={4} className="p-4 text-slate-500">Loading…</td></tr>}
+            {!busy && rows.length === 0 && <tr><td colSpan={4} className="p-4 text-slate-500">No pending requests.</td></tr>}
             {rows.map((r) => (
               <tr key={r.id} className="border-t border-slate-100">
                 <td className="p-3 font-mono">{r.student.studentId} <span className="text-xs text-slate-500">({r.student.status})</span></td>
                 <td className="p-3 font-mono">{r.macAddress}</td>
                 <td className="p-3">{r.reason ?? "—"}</td>
-                <td className="p-3">
-                  <div className="text-xs">
-                    <span className="font-medium">{r.syncState}</span>
-                    {r.syncAttempts > 0 ? <span className="text-slate-500"> · attempts {r.syncAttempts}</span> : null}
-                    {r.lastSyncError ? <div className="text-rose-600 mt-1">{r.lastSyncError}</div> : null}
-                  </div>
-                </td>
                 <td className="p-3 space-x-2 whitespace-nowrap">
                   <button onClick={() => act("/api/admin/approve-device", { deviceId: r.id })}
                     disabled={r.student.status !== "ACTIVE"}

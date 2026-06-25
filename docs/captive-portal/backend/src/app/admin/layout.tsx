@@ -1,11 +1,7 @@
 import Link from "next/link";
 import { getSession } from "@/lib/auth";
-import { startRouterSyncWorker } from "@/lib/routerSync";
-// Ensure the node-routeros Channel patch runs on the server
-import "@/lib/mikrotik-patch";
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
-  startRouterSyncWorker();
   // login page renders without nav; middleware lets it through unauthenticated
   const session = await getSession();
   if (!session.adminId) return <>{children}</>;
@@ -18,7 +14,6 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           <Link href="/admin" className="text-sm text-slate-600 hover:text-slate-900">Dashboard</Link>
           <Link href="/admin/students" className="text-sm text-slate-600 hover:text-slate-900">Students</Link>
           <Link href="/admin/devices" className="text-sm text-slate-600 hover:text-slate-900">Device requests</Link>
-          <Link href="/admin/settings" className="text-sm text-slate-600 hover:text-slate-900">Settings</Link>
           <form action="/api/admin/logout" method="POST" className="ml-auto">
             <button className="text-sm text-slate-500 hover:text-red-600">Sign out ({session.email})</button>
           </form>

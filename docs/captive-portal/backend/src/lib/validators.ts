@@ -11,8 +11,6 @@ export const studentIdSchema = z
 
 export const loginSchema = z.object({
   studentId: studentIdSchema,
-  nama: z.string().trim().max(128).optional(),
-  kelas: z.string().trim().max(64).optional(),
   mac: macSchema,
   ip: ipSchema,
   target: z.string().url().optional(),

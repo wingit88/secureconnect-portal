@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { requireAdmin } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  await requireAdmin();
   const q = req.nextUrl.searchParams.get("q")?.trim() ?? "";
   const status = req.nextUrl.searchParams.get("status") ?? undefined;
   const students = await db.student.findMany({

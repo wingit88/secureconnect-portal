@@ -41,9 +41,6 @@ VLAN 30  192.168.30.0/24   gw .1   Hotspot + external login page
 4. **End-to-end test** — open `http://neverssl.com` on the student device;
    the hotspot must redirect to the portal; submit a Student ID; admin
    approves; device reloads and reaches the internet without re-prompting.
-5. **Reliability smoke test** — on the backend server run
-   `npm run smoke:reliability` (optionally set `PORTAL_BASE_URL`) to verify
-   health endpoints and inspect sync-job status.
 
 ## Troubleshooting
 
@@ -51,17 +48,11 @@ VLAN 30  192.168.30.0/24   gw .1   Hotspot + external login page
   intercepts HTTP. Use `http://neverssl.com` for tests.
 - **Portal loads but `/api/login` 502s.** Backend box isn't reachable from
   VLAN 30. Check firewall rule `forward: vlan30 -> 192.168.10.2 accept`.
-- **MAC user added but device still sees portal / no internet.** Hotspot profile must have
-  `login-by=http-pap,mac` (both). `mac-auth-password` must be empty. Admin approval must
-  also call `/ip/hotspot/active/login` (via `provisionHotspotAccess`) — adding a static user
-  alone leaves the existing unauthenticated captive session walled off until the client is
-  logged in or disconnects and re-probes.
+- **MAC user added but device still sees portal.** Hotspot profile must have
+  `login-by=http-pap,mac` (both). `mac-auth-password` must be empty.
 - **MAC formatting drift.** All code paths funnel through
   `src/lib/mac.ts::normalize()` — uppercase, colon-separated. Never store raw.
 - **Router API refuses connection.** `/ip service print` — confirm `api`
   is enabled, address-list includes `192.168.10.0/24`.
-- **Admin action says queued.** Router sync now runs via durable `RouterSyncJob`
-  queue. Check `FAILED` jobs and `Device.syncState` in admin UI/logs if a
-  controller outage occurred.
 
 See `mikrotik/setup.rsc`, `backend/`, and `DEPLOY.md`.
