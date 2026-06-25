@@ -219,6 +219,103 @@ export async function drainRouterSyncQueue(): Promise<void> {
   }
 }
 
+async function processJob(job: { id: string; jobType: string; payload: string | null; attempts: number }, payload: JobPayload): Promise<void> {
+  await runJob(job.jobType, payload);
+  await db.routerSyncJob.update({
+    where: { id: job.id },
+    data: {
+      status: "DONE",
+      processedAt: new Date(),
+      lastError: null,
+      attempts: { increment: 1 },
+    },
+  });
+}
+
+async function processJobWithRetry(job: {
+  id: string;
+  jobType: string;
+  payload: string | null;
+  attempts: number;
+}): Promise<void> {
+  const payload: JobPayload = job.payload ? (JSON.parse(job.payload) as JobPayload) : {};
+  try {
+    await processJob(job, payload);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const attempts = job.attempts + 1;
+    const failedPermanently = attempts >= MAX_ATTEMPTS;
+    await db.routerSyncJob.update({
+      where: { id: job.id },
+      data: {
+        status: failedPermanently ? "FAILED" : "PENDING",
+        attempts,
+        lastError: message.slice(0, 500),
+        nextRetryAt: failedPermanently ? null : nextBackoff(attempts),
+      },
+    });
+    if (payload.deviceId) {
+      await markDeviceSyncFailed(payload.deviceId, message, attempts).catch(() => {});
+    }
+    throw err;
+  }
+}
+
+export async function drainRouterSyncQueueForDevice(
+  deviceId: string,
+  jobType?: SyncJobType,
+  maxJobs = 3,
+): Promise<void> {
+  // This function is intentionally not using the global `draining` lock: it's used
+  // to prioritize interactive admin actions and drain only a narrow set.
+  let processed = 0;
+  while (processed < maxJobs) {
+    const job = await db.routerSyncJob.findFirst({
+      where: {
+        status: "PENDING",
+        deviceId,
+        ...(jobType ? { jobType } : {}),
+        OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: new Date() } }],
+      },
+      orderBy: { createdAt: "asc" },
+    });
+    if (!job) return;
+    processed += 1;
+    const payload: JobPayload = job.payload ? (JSON.parse(job.payload) as JobPayload) : {};
+    try {
+      console.info(`[router-sync] processing targeted job ${job.id} type=${job.jobType} attempt=${job.attempts + 1}`);
+      await runJob(job.jobType, payload);
+      await db.routerSyncJob.update({
+        where: { id: job.id },
+        data: {
+          status: "DONE",
+          processedAt: new Date(),
+          lastError: null,
+          attempts: { increment: 1 },
+        },
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const attempts = job.attempts + 1;
+      const failedPermanently = attempts >= MAX_ATTEMPTS;
+      await db.routerSyncJob.update({
+        where: { id: job.id },
+        data: {
+          status: failedPermanently ? "FAILED" : "PENDING",
+          attempts,
+          lastError: message.slice(0, 500),
+          nextRetryAt: failedPermanently ? null : nextBackoff(attempts),
+        },
+      });
+      if (payload.deviceId) {
+        await markDeviceSyncFailed(payload.deviceId, message, attempts).catch(() => {});
+      }
+      // Stop early if the job isn't going to succeed right now; retries are scheduled.
+      return;
+    }
+  }
+}
+
 export async function reconcileRouterSyncState(): Promise<void> {
   const stale = await db.device.findMany({
     where: {

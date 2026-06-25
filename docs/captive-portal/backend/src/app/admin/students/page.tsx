@@ -1,7 +1,15 @@
 "use client";
 import { useEffect, useState } from "react";
 
-type Device = { id: string; macAddress: string; approved: boolean; reason: string | null };
+type Device = {
+  id: string;
+  macAddress: string;
+  approved: boolean;
+  reason: string | null;
+  syncState?: string;
+  syncAttempts?: number;
+  lastSyncError?: string | null;
+};
 type Student = {
   id: string;
   studentId: string;
@@ -143,8 +151,28 @@ export default function StudentsPage() {
                     <ul className="space-y-1">
                       {s.devices.map((d) => (
                         <li key={d.id} className="font-mono text-xs">
-                          {d.macAddress} {d.approved ? "✓" : <em className="text-amber-600">pending</em>}
+                          {d.macAddress}{" "}
+                          {d.approved ? "✓" : <em className="text-amber-600">pending</em>}
+                          {d.approved ? (
+                            <span
+                              className={
+                                d.syncState === "SYNCED"
+                                  ? "text-green-700"
+                                  : d.syncState === "SYNC_FAILED"
+                                    ? "text-rose-700"
+                                    : "text-amber-700"
+                              }
+                            >
+                              {" "}
+                              {d.syncState ?? "PENDING_SYNC"}
+                            </span>
+                          ) : null}
                           {d.reason && <span className="text-slate-500"> — {d.reason}</span>}
+                          {d.approved && d.syncState === "SYNC_FAILED" && d.lastSyncError ? (
+                            <span className="block text-[11px] text-rose-600 font-sans">
+                              {d.lastSyncError}
+                            </span>
+                          ) : null}
                         </li>
                       ))}
                     </ul>

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth";
 import { normalize } from "@/lib/mac";
-import { drainRouterSyncQueue, enqueueRouterSyncTx } from "@/lib/routerSync";
+import { drainRouterSyncQueueForDevice, enqueueRouterSyncTx } from "@/lib/routerSync";
 
 export const dynamic = "force-dynamic";
 const schema = z.object({ deviceId: z.string().min(1) });
@@ -38,8 +38,8 @@ export async function POST(req: NextRequest) {
       speedLimitKbps: device.student.speedLimitKbps ?? undefined,
     });
   });
-  // Try to process queued sync immediately in this request runtime too.
-  await drainRouterSyncQueue();
+  // Try to process this specific device's approve job immediately.
+  await drainRouterSyncQueueForDevice(device.id, "DEVICE_APPROVE");
 
   return NextResponse.json({ ok: true, queued: true, username });
 }

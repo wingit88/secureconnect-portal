@@ -19,7 +19,15 @@ export default function DevicesPage() {
     const flat: Row[] = [];
     for (const s of data.students) {
       for (const d of s.devices) {
-        if (!d.approved) flat.push({ ...d, student: { studentId: s.studentId, status: s.status } });
+        if (!d.approved) {
+          flat.push({
+            ...d,
+            syncState: d.syncState ?? "PENDING_SYNC",
+            syncAttempts: typeof d.syncAttempts === "number" ? d.syncAttempts : 0,
+            lastSyncError: d.lastSyncError ?? null,
+            student: { studentId: s.studentId, status: s.status },
+          });
+        }
       }
     }
     setRows(flat);

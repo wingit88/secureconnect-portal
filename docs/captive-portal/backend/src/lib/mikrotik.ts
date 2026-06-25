@@ -248,13 +248,7 @@ export async function loginUser(username: string, mac: string, ip: string): Prom
 
 /** Best-effort client IP lookup before tearing down an active hotspot session. */
 export async function resolveClientIpByMac(mac: string): Promise<string | null> {
-  const active = (await run(["/ip/hotspot/active/print", `?mac-address=${mac}`])) as Array<Record<string, string>>;
-  if (active[0]?.address) return active[0].address;
-
-  const leases = (await run(["/ip/dhcp-server/lease/print", `?mac-address=${mac}`])) as Array<Record<string, string>>;
-  const bound = leases.find((row) => row.address && row.status !== "expired");
-  if (bound?.address) return bound.address;
-
+  // ARP is typically present even when hotspot auth isn't complete.
   const arp = (await run(["/ip/arp/print", `?mac-address=${mac}`])) as Array<Record<string, string>>;
   if (arp[0]?.address) return arp[0].address;
 
@@ -271,11 +265,31 @@ export async function provisionHotspotAccess(
   mac: string,
   speedLimitKbps?: number,
 ): Promise<void> {
-  const ip = await resolveClientIpByMac(mac);
+  // Reliability principle:
+  // Always add/update the static hotspot user first so the admin list reflects reality,
+  // even if resolving IP/login needs to be retried later.
   await addHotspotUser(username, mac, speedLimitKbps);
-  await disconnectByMac(mac);
+
+  // Best-effort steps: these can legitimately fail/time out if the client is between states.
+  let ip: string | null = null;
+  try {
+    ip = await resolveClientIpByMac(mac);
+  } catch {
+    // ignore; we'll still have the hotspot user added
+  }
+
+  try {
+    await disconnectByMac(mac);
+  } catch {
+    // ignore; client will re-probe or we may reconcile later
+  }
+
   if (ip) {
-    await loginUser(username, mac, ip);
+    try {
+      await loginUser(username, mac, ip);
+    } catch {
+      // ignore; if login failed, the device should be authenticated on next probe
+    }
   }
 }
 
