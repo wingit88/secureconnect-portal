@@ -1,9 +1,52 @@
 import { getPortalConfig } from "@/lib/portalConfig";
 import { requireAdmin } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { z } from "zod";
+
+const schema = z.object({
+  urlFilterMode: z.enum(["disabled", "blacklist", "whitelist"]).optional(),
+  urlBlacklist: z.string().optional(),
+  urlWhitelist: z.string().optional(),
+});
+
+function parseLines(input?: string) {
+  if (!input) return undefined;
+  return input
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+}
 
 export default async function SettingsPage() {
   await requireAdmin();
   const config = await getPortalConfig();
+
+  async function handleSubmit(formData: FormData) {
+    "use server";
+    const { setPortalConfig } = await import("@/lib/portalConfig");
+
+    const data = {
+      urlFilterMode: formData.get("urlFilterMode") as string | undefined,
+      urlBlacklist: formData.get("urlBlacklist") as string | undefined,
+      urlWhitelist: formData.get("urlWhitelist") as string | undefined,
+    };
+
+    const parsed = schema.safeParse(data);
+    if (!parsed.success) throw new Error("Invalid input");
+
+    try {
+      await setPortalConfig({
+        urlFilterMode: parsed.data.urlFilterMode,
+        urlBlacklist: parseLines(parsed.data.urlBlacklist),
+        urlWhitelist: parseLines(parsed.data.urlWhitelist),
+      });
+    } catch (err) {
+      console.error("failed to save portal config", err);
+      throw new Error("Failed to save settings");
+    }
+
+    redirect("/admin/settings");
+  }
 
   const join = (arr: string[]) => arr.join("\n");
 
@@ -11,7 +54,7 @@ export default async function SettingsPage() {
     <div className="max-w-3xl mx-auto p-6">
       <h1 className="text-2xl font-semibold mb-4">Portal Settings</h1>
 
-      <form method="post" action="/api/admin/portal-config" className="space-y-6">
+      <form action={handleSubmit} className="space-y-6">
         <div>
           <label className="block font-medium">URL filter mode</label>
           <div className="mt-2 space-x-4">
