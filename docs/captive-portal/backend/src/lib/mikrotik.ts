@@ -73,11 +73,13 @@ async function getConn(): Promise<RouterOSAPI> {
     await c.connect();
     c.on("close", () => { conn = null; });
     // Log and allow next command to reconnect if needed.
+    // Suppress !empty and UNREGISTEREDTAG — both are handled by mikrotik-patch.ts
+    // and are not real errors (they are a known RouterOS API quirk).
     c.on("error", (err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
-      if (!msg.includes("!empty")) {
-        console.error("RouterOS connection error:", err);
-      }
+      const errno = (err as any)?.errno as string | undefined;
+      if (msg.includes("!empty") || errno === "UNREGISTEREDTAG") return;
+      console.error("RouterOS connection error:", err);
     });
     conn = c;
     return c;

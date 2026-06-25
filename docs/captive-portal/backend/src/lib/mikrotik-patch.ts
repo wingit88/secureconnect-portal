@@ -1,12 +1,27 @@
-// Eager patch for node-routeros Channel to ignore the !empty reply.
-// This module is intentionally side-effecting and should be imported
-// very early in the server runtime (for example from middleware.ts)
-// so the Channel.prototype.onUnknown handler is replaced before any
-// RouterOS connection is established by other modules.
+// Eager patches for node-routeros to handle quirks in RouterOS API responses.
+// This module is intentionally side-effecting and MUST be imported very early
+// in the server runtime so prototypes are patched before any connection is made.
+//
+// Patch 1 — Channel.prototype.onUnknown: treats "!empty" as a successful empty
+// result instead of an unknown reply, because RouterOS sends "!empty" for print
+// commands that match no entries (e.g. /ip/hotspot/user/print ?name=unknown).
+//
+// Patch 2 — Receiver.prototype.sendTagData: swallows UNREGISTEREDTAG instead of
+// throwing. This is the companion to patch 1: when we handle "!empty" in
+// onUnknown we emit "done" and close the channel, which deregisters the tag.
+// RouterOS then sends its own "!done" for the same command. Receiver.sendTagData
+// finds no handler for the (now-gone) tag and throws UNREGISTEREDTAG
+// synchronously inside the TCP socket "data" event. Node.js converts that throw
+// into a socket "error" event, which tears down the connection and causes the
+// *next* RouterOS command in the job (e.g. /ip/hotspot/user/add) to time out.
+// Swallowing UNREGISTEREDTAG at the source keeps the connection alive.
 
 import { createRequire } from "module";
 const requireModule = createRequire(import.meta.url);
 
+// ---------------------------------------------------------------------------
+// Patch 1: Channel.prototype.onUnknown — handle "!empty"
+// ---------------------------------------------------------------------------
 function applyEmptyPatch(): void {
   try {
     const channelCandidates: Array<unknown> = [];
@@ -70,6 +85,44 @@ function applyEmptyPatch(): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Patch 2: Receiver.prototype.sendTagData — swallow UNREGISTEREDTAG
+// ---------------------------------------------------------------------------
+function applyUnregisteredTagPatch(): void {
+  try {
+    let Receiver: any = undefined;
+
+    try {
+      const mod = requireModule("node-routeros/dist/connector/Receiver");
+      Receiver = mod?.default ?? mod;
+    } catch {
+      // ignore
+    }
+
+    if (!Receiver?.prototype?.sendTagData) {
+      console.warn("node-routeros patch: Receiver.sendTagData not found — UNREGISTEREDTAG may still throw");
+      return;
+    }
+
+    const origSendTagData = Receiver.prototype.sendTagData;
+    Receiver.prototype.sendTagData = function (...args: unknown[]): unknown {
+      try {
+        return origSendTagData.apply(this, args);
+      } catch (e: unknown) {
+        // UNREGISTEREDTAG is thrown when RouterOS sends a trailing !done after
+        // we already closed the channel (because we handled !empty). The tag is
+        // gone but the data still arrives. Safe to discard.
+        if ((e as any)?.errno === "UNREGISTEREDTAG") return;
+        throw e;
+      }
+    };
+    console.info("node-routeros patch active: UNREGISTEREDTAG handler");
+  } catch {
+    console.warn("node-routeros patch: Receiver patch failed to apply");
+  }
+}
+
 applyEmptyPatch();
+applyUnregisteredTagPatch();
 
 export {};
