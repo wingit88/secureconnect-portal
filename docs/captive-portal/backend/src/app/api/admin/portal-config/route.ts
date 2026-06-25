@@ -48,5 +48,7 @@ export async function POST(req: NextRequest) {
     return new NextResponse("Failed to save settings. Ensure database migrations have been applied.", { status: 500 });
   }
 
-  return NextResponse.redirect(new URL("/admin/settings", req.url));
+  const url = req.nextUrl.clone();
+  url.pathname = "/admin/settings";
+  return NextResponse.redirect(url);
 }
