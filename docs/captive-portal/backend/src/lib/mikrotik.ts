@@ -7,6 +7,7 @@ import { RouterOSAPI } from "node-routeros";
 let conn: RouterOSAPI | null = null;
 let connecting: Promise<RouterOSAPI> | null = null;
 let patchApplied = false;
+let writeQueue: Promise<unknown> = Promise.resolve();
 
 // Apply the !empty patch once when first needed
 function applyEmptyPatch(): void {
@@ -56,7 +57,7 @@ function makeClient(): RouterOSAPI {
     port: Number(process.env.MIKROTIK_PORT ?? 8728),
     user: process.env.MIKROTIK_API_USER!,
     password: process.env.MIKROTIK_API_PASS!,
-    timeout: 8,
+    timeout: 15,
     keepalive: true,
   });
 }
@@ -69,14 +70,12 @@ async function getConn(): Promise<RouterOSAPI> {
     const c = makeClient();
     await c.connect();
     c.on("close", () => { conn = null; });
-    // Handle errors, suppressing !empty as it's a normal response
+    // Log and allow next command to reconnect if needed.
     c.on("error", (err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
       if (!msg.includes("!empty")) {
         console.error("RouterOS connection error:", err);
       }
-      try { c.close(); } catch {}
-      conn = null;
     });
     conn = c;
     return c;
@@ -125,26 +124,34 @@ function isPrintCommand(words: string[]): boolean {
 }
 
 async function run(words: string[]): Promise<unknown[]> {
-  const c = await getConn();
-  try {
-    return await c.write(words);
-  } catch (err) {
-    if (isPrintCommand(words) && isEmptyReplyError(err)) {
-      return [];
-    }
-    // one retry on a fresh connection
-    try { c.close(); } catch {}
-    conn = null;
-    const c2 = await getConn();
+  const execute = async (): Promise<unknown[]> => {
+    const c = await getConn();
     try {
-      return await c2.write(words);
-    } catch (retryErr) {
-      if (isPrintCommand(words) && isEmptyReplyError(retryErr)) {
+      return await c.write(words);
+    } catch (err) {
+      if (isPrintCommand(words) && isEmptyReplyError(err)) {
         return [];
       }
-      throw retryErr;
+      // one retry on a fresh connection
+      try { c.close(); } catch {}
+      conn = null;
+      const c2 = await getConn();
+      try {
+        return await c2.write(words);
+      } catch (retryErr) {
+        if (isPrintCommand(words) && isEmptyReplyError(retryErr)) {
+          return [];
+        }
+        throw retryErr;
+      }
     }
-  }
+  };
+
+  // RouterOS API library gets unstable under concurrent writes on one socket.
+  // Serialize all commands through a single queue.
+  const runPromise = writeQueue.then(execute, execute);
+  writeQueue = runPromise.then(() => undefined, () => undefined);
+  return runPromise;
 }
 
 const profile = () => process.env.MIKROTIK_HOTSPOT_PROFILE ?? "student-profile";

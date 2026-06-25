@@ -25,19 +25,21 @@ export async function POST(req: NextRequest) {
   const siblings = await db.device.count({ where: { studentId: device.studentId, approved: true } });
   const username = siblings === 0 ? device.student.studentId : `${device.student.studentId}#${siblings + 1}`;
 
-  try {
-    await provisionHotspotAccess(username, mac, device.student.speedLimitKbps ?? undefined);
-  } catch (err) {
-    console.error("approve-device provisionHotspotAccess failed", err);
-    return new NextResponse("Router bind failed", { status: 503 });
-  }
-
   await db.device.update({
     where: { id: device.id },
     data: { approved: true, reason: null },
   });
 
   await db.auditLog.create({ data: { actor: session.email!, action: "device.approve", target: mac, meta: device.student.studentId } });
+
+  // Keep admin action responsive; RouterOS sync can lag or momentarily timeout.
+  void provisionHotspotAccess(username, mac, device.student.speedLimitKbps ?? undefined).catch(async (err) => {
+    console.error("approve-device provisionHotspotAccess failed", err);
+    await db.device.update({
+      where: { id: device.id },
+      data: { approved: false, reason: "router-bind-failed" },
+    }).catch(() => {});
+  });
 
   return NextResponse.json({ ok: true, username });
 }
