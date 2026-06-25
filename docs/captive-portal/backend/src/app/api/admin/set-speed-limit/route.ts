@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { getSession, requireAdmin } from "@/lib/auth";
+import { requireAdmin } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 const schema = z.object({
@@ -10,8 +10,7 @@ const schema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const session = await getSession();
-  requireAdmin(session);
+  const session = await requireAdmin();
 
   const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return new NextResponse("Invalid input", { status: 400 });
