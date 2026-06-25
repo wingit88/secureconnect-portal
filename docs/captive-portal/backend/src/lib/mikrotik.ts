@@ -155,6 +155,13 @@ async function findUserByName(name: string): Promise<{ ".id": string } | null> {
   return res[0] ? ({ ".id": res[0][".id"] }) : null;
 }
 
+/** Find a /ip/hotspot/user by MAC address. */
+async function findUserByMac(mac: string): Promise<{ ".id": string, name?: string } | null> {
+  const res = (await run(["/ip/hotspot/user/print", `?mac-address=${mac}`])) as Array<Record<string, string>>;
+  if (!res[0]) return null;
+  return { ".id": res[0][".id"], name: res[0].name };
+}
+
 /** Find an active hotspot session by MAC. */
 async function findActiveByMac(mac: string): Promise<{ ".id": string } | null> {
   const res = (await run(["/ip/hotspot/active/print", `?mac-address=${mac}`])) as Array<Record<string, string>>;
@@ -226,5 +233,78 @@ export async function removeAllUsersForStudent(studentId: string): Promise<void>
   const ids = await listHotspotUsersForStudent(studentId);
   for (const id of ids) {
     await run(["/ip/hotspot/user/remove", `=.id=${id}`]);
+  }
+}
+
+/** Remove a hotspot user entry by MAC address if present. */
+export async function removeHotspotUserByMac(mac: string): Promise<void> {
+  const u = await findUserByMac(mac);
+  if (!u) return;
+  await run(["/ip/hotspot/user/remove", `=.id=${u[".id"]}`]);
+}
+
+type UrlFilterMode = "disabled" | "blacklist" | "whitelist";
+
+export type UrlFilterConfig = {
+  urlFilterMode: UrlFilterMode;
+  urlBlacklist: string[];
+  urlWhitelist: string[];
+};
+
+const FILTER_COMMENT = "captive-portal-url-filter";
+const HOTSPOT_VLAN_INTERFACE = process.env.MIKROTIK_HOTSPOT_INTERFACE ?? "vlan30-students";
+
+async function cleanupUrlFilterRules(): Promise<void> {
+  const rules = (await run(["/ip/firewall/filter/print", `?comment=${FILTER_COMMENT}`])) as Array<Record<string, string>>;
+  for (const rule of rules) {
+    if (rule[".id"]) {
+      await run(["/ip/firewall/filter/remove", `=.id=${rule[".id"]}`]);
+    }
+  }
+}
+
+function buildFilterArgs(entry: string, action: "drop" | "accept") {
+  const args = [
+    "/ip/firewall/filter/add",
+    "=chain=forward",
+    `=in-interface=${HOTSPOT_VLAN_INTERFACE}`,
+    "=protocol=tcp",
+    "=dst-port=80,443",
+    `=dst-host=${entry}`,
+    `=action=${action}`,
+    `=comment=${FILTER_COMMENT}`,
+  ];
+  return args;
+}
+
+export async function syncUrlFilter(config: UrlFilterConfig): Promise<void> {
+  await cleanupUrlFilterRules();
+
+  if (config.urlFilterMode === "disabled") {
+    return;
+  }
+
+  if (config.urlFilterMode === "blacklist") {
+    for (const entry of config.urlBlacklist) {
+      if (!entry) continue;
+      await run(buildFilterArgs(entry, "drop"));
+    }
+    return;
+  }
+
+  if (config.urlFilterMode === "whitelist") {
+    for (const entry of config.urlWhitelist) {
+      if (!entry) continue;
+      await run(buildFilterArgs(entry, "accept"));
+    }
+    await run([
+      "/ip/firewall/filter/add",
+      "=chain=forward",
+      `=in-interface=${HOTSPOT_VLAN_INTERFACE}`,
+      "=protocol=tcp",
+      "=dst-port=80,443",
+      "=action=drop",
+      `=comment=${FILTER_COMMENT}`,
+    ]);
   }
 }

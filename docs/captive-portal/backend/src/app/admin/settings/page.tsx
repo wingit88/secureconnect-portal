@@ -1,6 +1,7 @@
-import { getPortalConfig } from "@/lib/portalConfig";
+import { getPortalConfig, setPortalConfig } from "@/lib/portalConfig";
 import { requireAdmin } from "@/lib/auth";
 import { redirect } from "next/navigation";
+import { syncUrlFilter } from "@/lib/mikrotik";
 import { z } from "zod";
 
 const schema = z.object({
@@ -23,8 +24,6 @@ export default async function SettingsPage() {
 
   async function handleSubmit(formData: FormData) {
     "use server";
-    const { setPortalConfig } = await import("@/lib/portalConfig");
-
     const data = {
       urlFilterMode: formData.get("urlFilterMode") as string | undefined,
       urlBlacklist: formData.get("urlBlacklist") as string | undefined,
@@ -39,6 +38,11 @@ export default async function SettingsPage() {
         urlFilterMode: parsed.data.urlFilterMode,
         urlBlacklist: parseLines(parsed.data.urlBlacklist),
         urlWhitelist: parseLines(parsed.data.urlWhitelist),
+      });
+      await syncUrlFilter({
+        urlFilterMode: parsed.data.urlFilterMode,
+        urlBlacklist: parseLines(parsed.data.urlBlacklist) ?? [],
+        urlWhitelist: parseLines(parsed.data.urlWhitelist) ?? [],
       });
     } catch (err) {
       console.error("failed to save portal config", err);

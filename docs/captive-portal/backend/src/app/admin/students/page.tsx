@@ -104,7 +104,9 @@ export default function StudentsPage() {
             )}
             {students.map((s) => (
               <tr key={s.id} className="border-t border-slate-100 align-top">
-                <td className="p-3 font-mono">{s.studentId}</td>
+                <td className="p-3 font-mono">
+                  <a href={`/admin/students/${s.studentId}`} className="underline text-sky-600">{s.studentId}</a>
+                </td>
                 <td className="p-3">{s.nama ?? "—"}</td>
                 <td className="p-3">{s.kelas ?? "—"}</td>
                 <td className="p-3">
