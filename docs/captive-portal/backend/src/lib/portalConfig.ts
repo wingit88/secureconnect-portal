@@ -28,19 +28,29 @@ function parseList(value: string | null | undefined): string[] {
 }
 
 export async function getPortalConfig(): Promise<PortalConfigRow> {
-  const entries = await db.portalConfig.findMany({
-    where: { key: { in: ["urlFilterMode", "urlBlacklist", "urlWhitelist"] } },
-  });
-  const map = entries.reduce<Record<string, string>>((acc, entry) => {
-    acc[entry.key] = entry.value ?? "";
-    return acc;
-  }, {});
+  try {
+    const entries = await db.portalConfig.findMany({
+      where: { key: { in: ["urlFilterMode", "urlBlacklist", "urlWhitelist"] } },
+    });
+    const map = entries.reduce<Record<string, string>>((acc, entry) => {
+      acc[entry.key] = entry.value ?? "";
+      return acc;
+    }, {});
 
-  return {
-    urlFilterMode: (map.urlFilterMode as UrlFilterMode) ?? defaultConfig.urlFilterMode,
-    urlBlacklist: parseList(map.urlBlacklist),
-    urlWhitelist: parseList(map.urlWhitelist),
-  };
+    return {
+      urlFilterMode: (map.urlFilterMode as UrlFilterMode) ?? defaultConfig.urlFilterMode,
+      urlBlacklist: parseList(map.urlBlacklist),
+      urlWhitelist: parseList(map.urlWhitelist),
+    };
+  } catch (err: any) {
+    // If the PortalConfig table doesn't exist yet (eg. fresh DB), return defaults
+    if (err && (err.code === "P2021" || (err.meta && err.meta.modelName === "PortalConfig"))) {
+      console.warn("PortalConfig table missing, using default config");
+      return defaultConfig;
+    }
+    console.error("error reading portal config", err);
+    return defaultConfig;
+  }
 }
 
 export async function setPortalConfig(config: Partial<PortalConfigRow>) {

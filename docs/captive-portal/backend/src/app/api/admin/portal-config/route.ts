@@ -37,11 +37,16 @@ export async function POST(req: NextRequest) {
   const parsed = schema.safeParse(body ?? {});
   if (!parsed.success) return new NextResponse("Invalid input", { status: 400 });
 
-  await setPortalConfig({
-    urlFilterMode: parsed.data.urlFilterMode,
-    urlBlacklist: parseLines(parsed.data.urlBlacklist),
-    urlWhitelist: parseLines(parsed.data.urlWhitelist),
-  });
+  try {
+    await setPortalConfig({
+      urlFilterMode: parsed.data.urlFilterMode,
+      urlBlacklist: parseLines(parsed.data.urlBlacklist),
+      urlWhitelist: parseLines(parsed.data.urlWhitelist),
+    });
+  } catch (err: any) {
+    console.error("failed to save portal config", err);
+    return new NextResponse("Failed to save settings. Ensure database migrations have been applied.", { status: 500 });
+  }
 
   return NextResponse.redirect(new URL("/admin/settings", req.url));
 }
