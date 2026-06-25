@@ -41,14 +41,28 @@ export async function middleware(req: NextRequest) {
   const isStudentVlan = clientIp.startsWith("192.168.30.");
   const isAdminVlan = clientIp.startsWith("192.168.10.") || clientIp.startsWith("192.168.20.");
 
-  // If coming from the student VLAN, redirect to the captive login/status pages
-  // rather than allowing access to admin UI. For API calls we return 403.
+  // If coming from the student VLAN, allow captive portal public endpoints
+  // and block only admin endpoints.
   if (isStudentVlan) {
-    if (url.pathname.startsWith("/api/")) {
+    if (url.pathname.startsWith("/api/admin")) {
       return new NextResponse("Forbidden", { status: 403 });
     }
-    // Optionally forward to the public login/status page. If the device knows
-    // its MAC it can append it as `?mac=...` and the status page will display info.
+
+    // Explicitly allow the captive portal endpoints used by students.
+    if (
+      url.pathname === "/api/login" ||
+      url.pathname === "/api/captive" ||
+      url.pathname === "/api/denied" ||
+      url.pathname === "/login" ||
+      url.pathname === "/status"
+    ) {
+      return NextResponse.next();
+    }
+
+    if (url.pathname.startsWith("/api/")) {
+      return NextResponse.next();
+    }
+
     const redirectTo = url.clone();
     redirectTo.pathname = "/login";
     return NextResponse.redirect(redirectTo);
