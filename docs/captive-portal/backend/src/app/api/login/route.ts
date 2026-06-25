@@ -6,6 +6,7 @@ import { take } from "@/lib/rateLimit";
 import { getPortalConfig } from "@/lib/portalConfig";
 import {
   addHotspotUser,
+  getHotspotUsernameByMac,
   loginUser as mtLogin,
 } from "@/lib/mikrotik";
 
@@ -118,8 +119,11 @@ export async function POST(req: NextRequest) {
 
   // 4a) This MAC already bound & approved -> log in
   if (existingForMac && existingForMac.approved) {
-    try { await mtLogin(studentId, mac, ip); }
-    catch (err) { console.error("hotspot login failed", err); /* fall through; static MAC user should pick it up next probe */ }
+    try {
+      const username = (await getHotspotUsernameByMac(mac)) ?? studentId;
+      await mtLogin(username, mac, ip);
+    } catch (err) {
+      console.error("hotspot login failed", err); /* fall through; static MAC user should pick it up next probe */ }
     return NextResponse.redirect(successUrl, { status: 302 });
   }
 

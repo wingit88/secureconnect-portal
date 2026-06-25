@@ -162,6 +162,11 @@ async function findUserByMac(mac: string): Promise<{ ".id": string, name?: strin
   return { ".id": res[0][".id"], name: res[0].name };
 }
 
+export async function getHotspotUsernameByMac(mac: string): Promise<string | null> {
+  const user = await findUserByMac(mac);
+  return user?.name ?? null;
+}
+
 /** Find an active hotspot session by MAC. */
 async function findActiveByMac(mac: string): Promise<{ ".id": string } | null> {
   const res = (await run(["/ip/hotspot/active/print", `?mac-address=${mac}`])) as Array<Record<string, string>>;
