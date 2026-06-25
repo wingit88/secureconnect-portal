@@ -39,7 +39,6 @@ export async function middleware(req: NextRequest) {
   // Simple /24 checks for local VLAN ranges. Keep this intentionally simple
   // and avoid heavy CIDR libraries so it can run in the Edge runtime.
   const isStudentVlan = clientIp.startsWith("192.168.30.");
-  const isAdminVlan = clientIp.startsWith("192.168.10.") || clientIp.startsWith("192.168.20.");
 
   // If coming from the student VLAN, allow captive portal public endpoints
   // and block only admin endpoints.
@@ -68,15 +67,7 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(redirectTo);
   }
 
-  // For other networks allow only from admin VLANs unless authenticated.
-  // If request originates from the admin VLAN we permit access to admin pages
-  // and APIs even without a session (network-level protection).
-  if (isAdminVlan) {
-    return NextResponse.next();
-  }
-
-  // Fallback behavior: require an authenticated admin session for /admin and
-  // /api/admin routes as before.
+  // Require an authenticated admin session for /admin and /api/admin routes.
   const res = NextResponse.next();
   const session = await getIronSession<AdminSession>(req, res, sessionOptions);
   if (!session.adminId) {

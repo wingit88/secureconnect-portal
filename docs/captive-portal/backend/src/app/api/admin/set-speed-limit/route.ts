@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { requireAdmin } from "@/lib/auth";
+import { drainRouterSyncQueue, enqueueRouterSyncTx } from "@/lib/routerSync";
 
 export const dynamic = "force-dynamic";
 const schema = z.object({
@@ -18,19 +19,24 @@ export async function POST(req: NextRequest) {
   const student = await db.student.findUnique({ where: { studentId: parsed.data.studentId } });
   if (!student) return new NextResponse("Student not found", { status: 404 });
 
-  await db.student.update({
-    where: { id: student.id },
-    data: { speedLimitKbps: parsed.data.speedLimitKbps },
+  await db.$transaction(async (tx) => {
+    await tx.student.update({
+      where: { id: student.id },
+      data: { speedLimitKbps: parsed.data.speedLimitKbps },
+    });
+    await tx.auditLog.create({
+      data: {
+        actor: session.email ?? "unknown",
+        action: "student.set-speed-limit",
+        target: student.studentId,
+        meta: String(parsed.data.speedLimitKbps),
+      },
+    });
+    await enqueueRouterSyncTx(tx, "STUDENT_SET_SPEED", {
+      studentId: student.id,
+      speedLimitKbps: parsed.data.speedLimitKbps,
+    });
   });
-
-  await db.auditLog.create({
-    data: {
-      actor: session.email ?? "unknown",
-      action: "student.set-speed-limit",
-      target: student.studentId,
-      meta: String(parsed.data.speedLimitKbps),
-    },
-  });
-
-  return NextResponse.json({ ok: true });
+  void drainRouterSyncQueue();
+  return NextResponse.json({ ok: true, queued: true });
 }

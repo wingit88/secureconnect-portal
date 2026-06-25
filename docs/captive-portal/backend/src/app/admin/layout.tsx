@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { getSession } from "@/lib/auth";
+import { startRouterSyncWorker } from "@/lib/routerSync";
 // Ensure the node-routeros Channel patch runs on the server
 import "@/lib/mikrotik-patch";
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
+  startRouterSyncWorker();
   // login page renders without nav; middleware lets it through unauthenticated
   const session = await getSession();
   if (!session.adminId) return <>{children}</>;

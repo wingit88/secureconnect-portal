@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { getSession } from "@/lib/auth";
-import { provisionHotspotAccess } from "@/lib/mikrotik";
+import { requireAdmin } from "@/lib/auth";
 import { normalize } from "@/lib/mac";
+import { drainRouterSyncQueue, enqueueRouterSyncTx } from "@/lib/routerSync";
 
 export const dynamic = "force-dynamic";
 const schema = z.object({ deviceId: z.string().min(1) });
 
 export async function POST(req: NextRequest) {
-  const session = await getSession();
+  const session = await requireAdmin();
   const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return new NextResponse("Invalid input", { status: 400 });
 
@@ -24,22 +24,22 @@ export async function POST(req: NextRequest) {
   // Username: studentId for the first device, studentId#N for additional ones.
   const siblings = await db.device.count({ where: { studentId: device.studentId, approved: true } });
   const username = siblings === 0 ? device.student.studentId : `${device.student.studentId}#${siblings + 1}`;
-
-  await db.device.update({
-    where: { id: device.id },
-    data: { approved: true, reason: null },
-  });
-
-  await db.auditLog.create({ data: { actor: session.email!, action: "device.approve", target: mac, meta: device.student.studentId } });
-
-  // Keep admin action responsive; RouterOS sync can lag or momentarily timeout.
-  void provisionHotspotAccess(username, mac, device.student.speedLimitKbps ?? undefined).catch(async (err) => {
-    console.error("approve-device provisionHotspotAccess failed", err);
-    await db.device.update({
+  await db.$transaction(async (tx) => {
+    await tx.device.update({
       where: { id: device.id },
-      data: { approved: false, reason: "router-bind-failed" },
-    }).catch(() => {});
+      data: { approved: true, reason: null },
+    });
+    await tx.auditLog.create({ data: { actor: session.email!, action: "device.approve", target: mac, meta: device.student.studentId } });
+    await enqueueRouterSyncTx(tx, "DEVICE_APPROVE", {
+      deviceId: device.id,
+      studentId: device.studentId,
+      username,
+      mac,
+      speedLimitKbps: device.student.speedLimitKbps ?? undefined,
+    });
   });
+  // Try to process queued sync immediately in this request runtime too.
+  await drainRouterSyncQueue();
 
-  return NextResponse.json({ ok: true, username });
+  return NextResponse.json({ ok: true, queued: true, username });
 }

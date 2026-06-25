@@ -46,7 +46,10 @@ function applyEmptyPatch(): void {
       }
     }
 
-    if (!Channel || !Channel.prototype) return;
+    if (!Channel || !Channel.prototype) {
+      console.warn("node-routeros patch: Channel prototype not found");
+      return;
+    }
 
     const origOnUnknown = Channel.prototype.onUnknown;
     Channel.prototype.onUnknown = function (reply: string): void {
@@ -61,8 +64,9 @@ function applyEmptyPatch(): void {
       }
       if (origOnUnknown) origOnUnknown.call(this, reply);
     };
+    console.info("node-routeros patch active: !empty handler");
   } catch {
-    // Intentionally silent; avoid throwing during server startup.
+    console.warn("node-routeros patch failed to apply");
   }
 }
 

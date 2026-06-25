@@ -8,6 +8,8 @@ let conn: RouterOSAPI | null = null;
 let connecting: Promise<RouterOSAPI> | null = null;
 let patchApplied = false;
 let writeQueue: Promise<unknown> = Promise.resolve();
+const RETRYABLE_ERROR_CODES = ["SOCKTMOUT", "ECONNRESET", "EPIPE", "ETIMEDOUT", "UNREGISTEREDTAG"];
+const MAX_ATTEMPTS = 3;
 
 // Apply the !empty patch once when first needed
 function applyEmptyPatch(): void {
@@ -124,34 +126,52 @@ function isPrintCommand(words: string[]): boolean {
 }
 
 async function run(words: string[]): Promise<unknown[]> {
-  const execute = async (): Promise<unknown[]> => {
-    const c = await getConn();
-    try {
-      return await c.write(words);
-    } catch (err) {
-      if (isPrintCommand(words) && isEmptyReplyError(err)) {
-        return [];
-      }
-      // one retry on a fresh connection
-      try { c.close(); } catch {}
-      conn = null;
-      const c2 = await getConn();
-      try {
-        return await c2.write(words);
-      } catch (retryErr) {
-        if (isPrintCommand(words) && isEmptyReplyError(retryErr)) {
-          return [];
-        }
-        throw retryErr;
-      }
-    }
-  };
+  const execute = async (): Promise<unknown[]> => runWithRetry(words);
 
   // RouterOS API library gets unstable under concurrent writes on one socket.
   // Serialize all commands through a single queue.
   const runPromise = writeQueue.then(execute, execute);
   writeQueue = runPromise.then(() => undefined, () => undefined);
   return runPromise;
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function classifyRouterError(err: unknown): { retryable: boolean; code: string } {
+  const msg = err instanceof Error ? err.message : String(err);
+  const anyErr = err as { errno?: string; code?: string } | undefined;
+  const code = String(anyErr?.errno ?? anyErr?.code ?? "");
+  const upper = `${code} ${msg}`.toUpperCase();
+  const retryable = RETRYABLE_ERROR_CODES.some((c) => upper.includes(c));
+  return { retryable, code: code || "UNKNOWN" };
+}
+
+async function writeOnce(words: string[]): Promise<unknown[]> {
+  const c = await getConn();
+  return c.write(words);
+}
+
+async function runWithRetry(words: string[]): Promise<unknown[]> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await writeOnce(words);
+    } catch (err) {
+      if (isPrintCommand(words) && isEmptyReplyError(err)) {
+        return [];
+      }
+      lastErr = err;
+      const { retryable } = classifyRouterError(err);
+      if (!retryable || attempt === MAX_ATTEMPTS) break;
+      try { conn?.close(); } catch {}
+      conn = null;
+      const backoffMs = 200 * Math.pow(2, attempt - 1) + Math.floor(Math.random() * 120);
+      await wait(backoffMs);
+    }
+  }
+  throw lastErr;
 }
 
 const profile = () => process.env.MIKROTIK_HOTSPOT_PROFILE ?? "student-profile";

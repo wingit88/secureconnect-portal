@@ -131,18 +131,44 @@ export async function POST(req: NextRequest) {
 
   // 4b) No devices bound yet -> bind this MAC, add static MAC user, log in
   if (student.devices.length === 0) {
-    await db.student.update({ where: { id: student.id }, data: { nama: nama ?? student.nama, kelas: kelas ?? student.kelas } });
-    await db.device.upsert({
-      where: { macAddress: mac },
-      update: { studentId: student.id, approved: true, reason: null },
-      create: { macAddress: mac, studentId: student.id, approved: true },
+    await db.$transaction(async (tx) => {
+      await tx.student.update({ where: { id: student.id }, data: { nama: nama ?? student.nama, kelas: kelas ?? student.kelas } });
+      await tx.device.upsert({
+        where: { macAddress: mac },
+        update: {
+          studentId: student.id,
+          approved: true,
+          reason: null,
+          syncState: "PENDING_SYNC",
+          syncAttempts: 0,
+          nextRetryAt: null,
+          lastSyncError: null,
+        },
+        create: {
+          macAddress: mac,
+          studentId: student.id,
+          approved: true,
+          syncState: "PENDING_SYNC",
+        },
+      });
     });
     try {
       await provisionHotspotAccess(studentId, mac, student.speedLimitKbps ?? undefined);
+      await db.device.update({
+        where: { macAddress: mac },
+        data: { syncState: "SYNCED", syncAttempts: 0, nextRetryAt: null, lastSyncError: null, lastSyncedAt: new Date() },
+      });
     } catch (err) {
       console.error("mikrotik bind failed", err);
-      // roll back so admin can retry approval
-      await db.device.update({ where: { macAddress: mac }, data: { approved: false, reason: "router-bind-failed" } });
+      await db.device.update({
+        where: { macAddress: mac },
+        data: {
+          syncState: "SYNC_FAILED",
+          syncAttempts: { increment: 1 },
+          nextRetryAt: new Date(Date.now() + 30_000),
+          lastSyncError: err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500),
+        },
+      });
       return page("Network busy", "<p>Couldn't reach the network controller. Please try again in a minute.</p>", 503);
     }
     return NextResponse.redirect(successUrl, { status: 302 });
