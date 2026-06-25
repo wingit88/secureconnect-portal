@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { getSession } from "@/lib/auth";
+// Ensure the node-routeros Channel patch runs on the server
+import "@/lib/mikrotik-patch";
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   // login page renders without nav; middleware lets it through unauthenticated

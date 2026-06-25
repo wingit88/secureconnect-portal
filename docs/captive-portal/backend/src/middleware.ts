@@ -1,8 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getIronSession } from "iron-session";
 import { sessionOptions, type AdminSession } from "@/lib/session";
-// Ensure the node-routeros Channel patch runs early on the server process.
-import "@/lib/mikrotik-patch";
 
 export const config = {
   matcher: ["/admin/:path*", "/api/admin/:path*"],
