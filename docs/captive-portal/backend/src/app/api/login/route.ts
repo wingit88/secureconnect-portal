@@ -6,8 +6,15 @@ import { take } from "@/lib/rateLimit";
 import {
   approveDevice,
 } from "@/lib/mikrotik";
+import { refreshDeviceHostname } from "@/lib/device-sync";
 
 export const dynamic = "force-dynamic";
+
+function esc(s: string): string {
+  return s.replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!,
+  );
+}
 
 function page(title: string, body: string, status = 200): Response {
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>
@@ -18,13 +25,14 @@ h1{font-size:20px;margin:0 0 12px}p{color:#475569;line-height:1.5;margin:0}</sty
   return new Response(html, { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
-function reasonForm(studentId: string, mac: string, ip: string, target: string): Response {
-  const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+function reasonForm(studentId: string, nama: string, kelas: string, mac: string, ip: string, target: string): Response {
   return page(
     "Additional device request",
     `<p style="margin-bottom:16px">You already have a registered device. Tell the admin why you need to add this one.</p>
      <form method="POST" action="/api/login" style="text-align:left">
        <input type="hidden" name="studentId" value="${esc(studentId)}">
+       <input type="hidden" name="nama" value="${esc(nama)}">
+       <input type="hidden" name="kelas" value="${esc(kelas)}">
        <input type="hidden" name="mac" value="${esc(mac)}">
        <input type="hidden" name="ip" value="${esc(ip)}">
        <input type="hidden" name="target" value="${esc(target)}">
@@ -52,7 +60,7 @@ export async function POST(req: NextRequest) {
   const parsed = loginSchema.safeParse(raw);
   if (!parsed.success) return page("Invalid request", parsed.error.issues[0]?.message ?? "Bad input", 400);
 
-  const { studentId, ip, target, reason } = parsed.data;
+  const { studentId, nama, kelas, ip, target, reason } = parsed.data;
   let mac: string;
   try { mac = normalize(parsed.data.mac); }
   catch { return page("Invalid request", "Bad MAC address", 400); }
@@ -67,16 +75,14 @@ export async function POST(req: NextRequest) {
   // 1) Unknown student -> create PENDING + record device unapproved
   if (!student) {
     const created = await db.student.create({
-      data: { studentId, status: "PENDING" },
+      data: { studentId, nama, kelas, status: "PENDING" },
     });
-    await db.device.upsert({
+    const device = await db.device.upsert({
       where: { macAddress: mac },
       update: { studentId: created.id, approved: false, reason: "first-registration" },
       create: { macAddress: mac, studentId: created.id, approved: false, reason: "first-registration" },
     });
-    // Show a waiting page that polls /api/status and auto-submits the login
-    // form once the admin approves. Path 4a then creates/refreshes the IP
-    // binding and evicts the walled-off hotspot host entry.
+    void refreshDeviceHostname(mac, device.id).catch(() => {});
     const waitHtml = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Waiting for approval…</title>
@@ -95,6 +101,8 @@ h1{font-size:20px;margin:0 0 12px}p{color:#475569;line-height:1.5;margin:0 0 12p
 <p style="margin-top:16px"><span class="dot"></span><span class="dot"></span><span class="dot"></span></p>
 <form id="f" method="POST" action="/api/login" style="display:none">
   <input name="studentId" value="${studentId}">
+  <input name="nama" value="${esc(nama)}">
+  <input name="kelas" value="${esc(kelas)}">
   <input name="mac" value="${mac}">
   <input name="ip" value="${ip}">
   <input name="target" value="${target ?? ""}">
@@ -160,13 +168,14 @@ h1{font-size:20px;margin:0 0 12px}p{color:#475569;line-height:1.5;margin:0 0 12p
   }
 
   // 4c) Different MAC already bound -> require reason, create pending request
-  if (!reason) return reasonForm(studentId, mac, ip, target ?? "");
+  if (!reason) return reasonForm(studentId, student.nama, student.kelas, mac, ip, target ?? "");
 
   await db.device.upsert({
     where: { macAddress: mac },
     update: { studentId: student.id, approved: false, reason },
     create: { macAddress: mac, studentId: student.id, approved: false, reason },
   });
+  void refreshDeviceHostname(mac).catch(() => {});
   return page(
     "Request submitted",
     "<p>Your request to add this device has been sent to the administrator.</p>",

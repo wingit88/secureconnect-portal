@@ -3,8 +3,12 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 type Row = {
-  id: string; macAddress: string; reason: string | null; createdAt: string;
-  student: { id: string; studentId: string; status: string };
+  id: string;
+  macAddress: string;
+  hostname: string | null;
+  reason: string | null;
+  createdAt: string;
+  student: { id: string; studentId: string; nama: string; kelas: string; status: string };
 };
 
 export default function DevicesPage() {
@@ -18,7 +22,12 @@ export default function DevicesPage() {
     const flat: Row[] = [];
     for (const s of data.students) {
       for (const d of s.devices) {
-        if (!d.approved) flat.push({ ...d, student: { id: s.id, studentId: s.studentId, status: s.status } });
+        if (!d.approved) {
+          flat.push({
+            ...d,
+            student: { id: s.id, studentId: s.studentId, nama: s.nama, kelas: s.kelas, status: s.status },
+          });
+        }
       }
     }
     setRows(flat);
@@ -39,14 +48,22 @@ export default function DevicesPage() {
   return (
     <div className="space-y-4">
       <h1 className="text-xl font-semibold">Pending device requests</h1>
-      <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="bg-white border border-slate-200 rounded-lg overflow-x-auto">
+        <table className="w-full text-sm min-w-[900px]">
           <thead className="bg-slate-50 text-left">
-            <tr><th className="p-3">Student</th><th className="p-3">MAC</th><th className="p-3">Reason</th><th className="p-3">Actions</th></tr>
+            <tr>
+              <th className="p-3">Student</th>
+              <th className="p-3">Nama</th>
+              <th className="p-3">Kelas</th>
+              <th className="p-3">MAC</th>
+              <th className="p-3">Hostname</th>
+              <th className="p-3">Reason</th>
+              <th className="p-3">Actions</th>
+            </tr>
           </thead>
           <tbody>
-            {busy && <tr><td colSpan={4} className="p-4 text-slate-500">Loading…</td></tr>}
-            {!busy && rows.length === 0 && <tr><td colSpan={4} className="p-4 text-slate-500">No pending requests.</td></tr>}
+            {busy && <tr><td colSpan={7} className="p-4 text-slate-500">Loading…</td></tr>}
+            {!busy && rows.length === 0 && <tr><td colSpan={7} className="p-4 text-slate-500">No pending requests.</td></tr>}
             {rows.map((r) => (
               <tr key={r.id} className="border-t border-slate-100">
                 <td className="p-3">
@@ -55,15 +72,22 @@ export default function DevicesPage() {
                   </Link>
                   <span className="text-xs text-slate-500 ml-1">({r.student.status})</span>
                 </td>
+                <td className="p-3">{r.student.nama || "—"}</td>
+                <td className="p-3">{r.student.kelas || "—"}</td>
                 <td className="p-3 font-mono">{r.macAddress}</td>
+                <td className="p-3">{r.hostname ?? "—"}</td>
                 <td className="p-3">{r.reason ?? "—"}</td>
                 <td className="p-3 space-x-2 whitespace-nowrap">
-                  <button onClick={() => act("/api/admin/approve-device", { deviceId: r.id })}
+                  <button
+                    onClick={() => act("/api/admin/approve-device", { deviceId: r.id })}
                     disabled={r.student.status !== "ACTIVE"}
-                    title={r.student.status !== "ACTIVE" ? "Approve the student first" : ""}
-                    className="px-2 py-1 text-xs bg-green-600 text-white rounded disabled:opacity-40">Approve</button>
-                  <button onClick={() => handleReject(r.id, r.macAddress)}
-                    className="px-2 py-1 text-xs bg-red-600 text-white rounded">Reject</button>
+                    title={r.student.status !== "ACTIVE" ? "Approve or re-approve the student first" : ""}
+                    className="px-2 py-1 text-xs bg-green-600 text-white rounded disabled:opacity-40"
+                  >{r.reason === "revoked-by-admin" ? "Re-approve" : "Approve"}</button>
+                  {r.reason !== "revoked-by-admin" && (
+                    <button onClick={() => handleReject(r.id, r.macAddress)}
+                      className="px-2 py-1 text-xs bg-red-600 text-white rounded">Reject</button>
+                  )}
                 </td>
               </tr>
             ))}

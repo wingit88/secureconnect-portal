@@ -9,8 +9,22 @@ export const studentIdSchema = z
   .max(64)
   .regex(/^[A-Za-z0-9_-]+$/, "Letters, digits, _ and - only");
 
+export const namaSchema = z
+  .string()
+  .trim()
+  .min(2, "Nama minimal 2 karakter")
+  .max(100, "Nama maksimal 100 karakter");
+
+export const kelasSchema = z
+  .string()
+  .trim()
+  .min(1, "Kelas wajib diisi")
+  .max(50, "Kelas maksimal 50 karakter");
+
 export const loginSchema = z.object({
   studentId: studentIdSchema,
+  nama: namaSchema,
+  kelas: kelasSchema,
   mac: macSchema,
   ip: ipSchema,
   target: z.string().url().optional(),

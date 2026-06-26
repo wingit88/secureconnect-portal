@@ -277,6 +277,39 @@ async function findHostByMac(
   return res.length ? { ".id": res[0][".id"] } : null;
 }
 
+function pickHostname(row: Record<string, string>): string | null {
+  const raw = row["host-name"] ?? row.hostname ?? row["dhcp-hostname"] ?? "";
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * Read the client hostname from MikroTik (hotspot host table, then DHCP lease).
+ * Call before approveDevice() removes the host entry.
+ */
+export async function readHostnameByMac(mac: string): Promise<string | null> {
+  const hosts = (await run([
+    "/ip/hotspot/host/print",
+    `?mac-address=${mac}`,
+  ])) as Array<Record<string, string>>;
+
+  if (hosts.length > 0) {
+    const name = pickHostname(hosts[0]);
+    if (name) return name;
+  }
+
+  const leases = (await run([
+    "/ip/dhcp-server/lease/print",
+    `?mac-address=${mac}`,
+  ])) as Array<Record<string, string>>;
+
+  if (leases.length > 0) {
+    return pickHostname(leases[0]);
+  }
+
+  return null;
+}
+
 /**
  * Approve a device.
  *

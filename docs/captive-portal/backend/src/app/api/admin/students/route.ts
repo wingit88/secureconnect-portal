@@ -8,7 +8,13 @@ export async function GET(req: NextRequest) {
   const status = req.nextUrl.searchParams.get("status") ?? undefined;
   const students = await db.student.findMany({
     where: {
-      ...(q ? { studentId: { contains: q } } : {}),
+      ...(q ? {
+        OR: [
+          { studentId: { contains: q } },
+          { nama: { contains: q } },
+          { kelas: { contains: q } },
+        ],
+      } : {}),
       ...(status && ["PENDING", "ACTIVE", "DENIED"].includes(status) ? { status: status as "PENDING" | "ACTIVE" | "DENIED" } : {}),
     },
     include: { devices: true },

@@ -11,12 +11,14 @@ datasource db {
 }
 
 model Student {
-  id        String        @id @default(cuid())
-  studentId String        @unique
+  id        String   @id @default(cuid())
+  studentId String   @unique
+  nama      String   @default("")
+  kelas     String   @default("")
   // SQLite has no enum support. Allowed values: "PENDING" | "ACTIVE" | "DENIED".
-  status    String        @default("PENDING")
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
+  status    String   @default("PENDING")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
   devices   Device[]
 
   @@index([status])
@@ -25,6 +27,7 @@ model Student {
 model Device {
   id         String   @id @default(cuid())
   macAddress String   @unique
+  hostname   String?
   studentId  String
   student    Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
   approved   Boolean  @default(false)

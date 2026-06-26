@@ -2,8 +2,16 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-type Device = { id: string; macAddress: string; approved: boolean; reason: string | null };
-type Student = { id: string; studentId: string; status: "PENDING" | "ACTIVE" | "DENIED"; createdAt: string; devices: Device[] };
+type Device = { id: string; macAddress: string; hostname: string | null; approved: boolean; reason: string | null };
+type Student = {
+  id: string;
+  studentId: string;
+  nama: string;
+  kelas: string;
+  status: "PENDING" | "ACTIVE" | "DENIED";
+  createdAt: string;
+  devices: Device[];
+};
 
 export default function StudentsPage() {
   const [q, setQ] = useState("");
@@ -41,8 +49,8 @@ export default function StudentsPage() {
   return (
     <div className="space-y-4">
       <h1 className="text-xl font-semibold">Students</h1>
-      <div className="flex gap-2 items-end">
-        <input className="px-3 py-2 border rounded-md" placeholder="Search Student ID" value={q} onChange={(e) => setQ(e.target.value)} />
+      <div className="flex gap-2 items-end flex-wrap">
+        <input className="px-3 py-2 border rounded-md" placeholder="Search ID, nama, or kelas" value={q} onChange={(e) => setQ(e.target.value)} />
         <select className="px-3 py-2 border rounded-md" value={status} onChange={(e) => setStatus(e.target.value)}>
           <option value="">All statuses</option>
           <option value="PENDING">Pending</option>
@@ -52,14 +60,21 @@ export default function StudentsPage() {
         <button onClick={load} className="px-4 py-2 bg-slate-900 text-white rounded-md">Search</button>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="bg-white border border-slate-200 rounded-lg overflow-x-auto">
+        <table className="w-full text-sm min-w-[720px]">
           <thead className="bg-slate-50 text-left">
-            <tr><th className="p-3">Student ID</th><th className="p-3">Status</th><th className="p-3">Devices</th><th className="p-3 w-0 whitespace-nowrap">Actions</th></tr>
+            <tr>
+              <th className="p-3">Student ID</th>
+              <th className="p-3">Nama</th>
+              <th className="p-3">Kelas</th>
+              <th className="p-3">Status</th>
+              <th className="p-3">Devices</th>
+              <th className="p-3 w-0 whitespace-nowrap">Actions</th>
+            </tr>
           </thead>
           <tbody>
-            {busy && <tr><td colSpan={4} className="p-4 text-slate-500">Loading…</td></tr>}
-            {!busy && students.length === 0 && <tr><td colSpan={4} className="p-4 text-slate-500">No students.</td></tr>}
+            {busy && <tr><td colSpan={6} className="p-4 text-slate-500">Loading…</td></tr>}
+            {!busy && students.length === 0 && <tr><td colSpan={6} className="p-4 text-slate-500">No students.</td></tr>}
             {students.map((s) => {
               const approved = s.devices.filter((d) => d.approved).length;
               const pending = s.devices.length - approved;
@@ -70,6 +85,8 @@ export default function StudentsPage() {
                       {s.studentId}
                     </Link>
                   </td>
+                  <td className="p-3">{s.nama || <span className="text-slate-400">—</span>}</td>
+                  <td className="p-3">{s.kelas || <span className="text-slate-400">—</span>}</td>
                   <td className="p-3"><span className={
                     s.status === "ACTIVE" ? "text-green-700" : s.status === "DENIED" ? "text-red-700" : "text-amber-700"
                   }>{s.status}</span></td>
@@ -84,10 +101,13 @@ export default function StudentsPage() {
                     )}
                   </td>
                   <td className="p-3 space-x-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                    {s.status === "PENDING" && (
-                      <button onClick={() => act("/api/admin/approve-student", { studentId: s.studentId })} className="px-2 py-1 text-xs bg-green-600 text-white rounded">Approve</button>
+                    {(s.status === "PENDING" || s.status === "DENIED") && (
+                      <button
+                        onClick={() => act("/api/admin/approve-student", { studentId: s.studentId })}
+                        className="px-2 py-1 text-xs bg-green-600 text-white rounded"
+                      >{s.status === "DENIED" ? "Re-approve" : "Approve"}</button>
                     )}
-                    {s.status !== "DENIED" && (
+                    {s.status !== "DENIED" && s.status !== "PENDING" && (
                       <button onClick={() => handleRevoke(s.studentId)} className="px-2 py-1 text-xs bg-red-600 text-white rounded">Revoke</button>
                     )}
                     <button onClick={() => handleDelete(s.studentId)} className="px-2 py-1 text-xs bg-rose-700 text-white rounded">Delete</button>

@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { approveDevice } from "@/lib/mikrotik";
 import { normalize } from "@/lib/mac";
+import { refreshDeviceHostname } from "@/lib/device-sync";
 
 export const dynamic = "force-dynamic";
 const schema = z.object({ studentId: z.string().min(1).max(64) });
@@ -22,6 +23,8 @@ export async function POST(req: NextRequest) {
   });
   if (!student) return new NextResponse("Not found", { status: 404 });
 
+  const wasDenied = student.status === "DENIED";
+
   const updated = await db.student.update({
     where: { id: student.id },
     data: { status: "ACTIVE" },
@@ -30,20 +33,22 @@ export async function POST(req: NextRequest) {
   await db.auditLog.create({
     data: {
       actor: session.email ?? session.adminId,
-      action: "student.approve",
+      action: wasDenied ? "student.reapprove" : "student.approve",
       target: updated.studentId,
     },
   });
 
-  // Auto-approve the first registration device so the waiting page can connect.
-  const firstDevice = student.devices.find(
-    (d) => !d.approved && d.reason === "first-registration",
-  );
+  // Auto-approve the first registration device (new sign-ups only).
+  const firstDevice = !wasDenied
+    ? student.devices.find((d) => !d.approved && d.reason === "first-registration")
+    : undefined;
+
   if (firstDevice) {
     const mac = normalize(firstDevice.macAddress);
+    const hostname = await refreshDeviceHostname(mac, firstDevice.id).catch(() => null);
     await db.device.update({
       where: { id: firstDevice.id },
-      data: { approved: true, reason: null },
+      data: { approved: true, reason: null, ...(hostname ? { hostname } : {}) },
     });
     void approveDevice(student.studentId, mac).catch(async (err) => {
       console.error("approve-student auto device approve failed", err);
@@ -54,5 +59,5 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  return NextResponse.json({ ok: true, autoApprovedDevice: !!firstDevice });
+  return NextResponse.json({ ok: true, autoApprovedDevice: !!firstDevice, reapproved: wasDenied });
 }
