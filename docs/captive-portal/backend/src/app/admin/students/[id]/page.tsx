@@ -25,6 +25,7 @@ type Student = {
 function deviceStatus(d: Device, studentStatus: Student["status"]): { label: string; className: string } {
   if (d.approved) return { label: "Approved", className: "text-green-700" };
   if (d.reason === "revoked-by-admin") return { label: "Revoked", className: "text-red-700" };
+  if (d.reason === "denied-by-admin") return { label: "Denied", className: "text-red-700" };
   if (studentStatus === "DENIED") return { label: "Denied", className: "text-red-600" };
   return { label: "Pending", className: "text-amber-700" };
 }
