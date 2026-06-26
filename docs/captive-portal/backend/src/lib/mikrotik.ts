@@ -118,77 +118,138 @@ async function run(words: string[]): Promise<unknown[]> {
 
 const profile = () => process.env.MIKROTIK_HOTSPOT_PROFILE ?? "student-profile";
 
-/** Find a /ip/hotspot/user by name. */
-async function findUserByName(name: string): Promise<{ ".id": string } | null> {
-  const res = (await run(["/ip/hotspot/user/print", `?name=${name}`])) as Array<Record<string, string>>;
-  return res[0] ? ({ ".id": res[0][".id"] }) : null;
+/** Find an IP Binding by MAC. */
+async function findIpBindingByMac(
+  mac: string
+): Promise<{ ".id": string } | null> {
+  const res = (await run([
+    "/ip/hotspot/ip-binding/print",
+    `?mac-address=${mac}`,
+  ])) as Array<Record<string, string>>;
+
+  return res.length
+    ? { ".id": res[0][".id"] }
+    : null;
 }
 
-/** Find an active hotspot session by MAC. */
-async function findActiveByMac(mac: string): Promise<{ ".id": string } | null> {
-  const res = (await run(["/ip/hotspot/active/print", `?mac-address=${mac}`])) as Array<Record<string, string>>;
-  return res[0] ? ({ ".id": res[0][".id"] }) : null;
+/** Find a Hotspot Host by MAC. */
+async function findHostByMac(
+  mac: string
+): Promise<{ ".id": string } | null> {
+  const res = (await run([
+    "/ip/hotspot/host/print",
+    `?mac-address=${mac}`,
+  ])) as Array<Record<string, string>>;
+
+  return res.length
+    ? { ".id": res[0][".id"] }
+    : null;
 }
 
-/** Permanent MAC-authenticated hotspot user. Idempotent. */
-export async function addHotspotUser(username: string, mac: string): Promise<void> {
-  const existing = await findUserByName(username);
+/**
+ * Approve a device.
+ *
+ * Creates or updates an IP Binding of type=bypassed.
+ * Afterward, removes the current Host entry so MikroTik
+ * immediately re-evaluates the client.
+ */
+export async function approveDevice(
+  studentId: string,
+  mac: string
+): Promise<void> {
+  const existing = await findIpBindingByMac(mac);
+
   if (existing) {
     await run([
-      "/ip/hotspot/user/set",
+      "/ip/hotspot/ip-binding/set",
       `=.id=${existing[".id"]}`,
-      `=mac-address=${mac}`,
-      `=profile=${profile()}`,
-      `=password=`,
+      "=type=bypassed",
+      "=disabled=no",
+      `=comment=${studentId}`,
     ]);
-    return;
+  } else {
+    await run([
+      "/ip/hotspot/ip-binding/add",
+      `=mac-address=${mac}`,
+      "=type=bypassed",
+      `=comment=${studentId}`,
+    ]);
   }
-  await run([
-    "/ip/hotspot/user/add",
-    `=name=${username}`,
-    `=mac-address=${mac}`,
-    `=profile=${profile()}`,
-    `=password=`,
-    `=comment=captive-portal`,
-  ]);
+
+  // Force Hotspot to re-check this client.
+  const host = await findHostByMac(mac);
+
+  if (host) {
+    await run([
+      "/ip/hotspot/host/remove",
+      `=.id=${host[".id"]}`,
+    ]);
+  }
 }
 
-/** Remove the hotspot user by name. No-op if missing. */
-export async function removeHotspotUserByName(username: string): Promise<void> {
-  const u = await findUserByName(username);
-  if (!u) return;
-  await run(["/ip/hotspot/user/remove", `=.id=${u[".id"]}`]);
+/**
+ * Revoke access.
+ *
+ * Removes the IP Binding so the next request
+ * is redirected back to the captive portal.
+ */
+export async function revokeDevice(
+  mac: string
+): Promise<void> {
+  const binding = await findIpBindingByMac(mac);
+
+  if (binding) {
+    await run([
+      "/ip/hotspot/ip-binding/remove",
+      `=.id=${binding[".id"]}`,
+    ]);
+  }
+
+  const host = await findHostByMac(mac);
+
+  if (host) {
+    await run([
+      "/ip/hotspot/host/remove",
+      `=.id=${host[".id"]}`,
+    ]);
+  }
 }
 
-/** Immediately log a client into the hotspot. */
-export async function loginUser(username: string, mac: string, ip: string): Promise<void> {
-  await run([
-    "/ip/hotspot/active/login",
-    `=user=${username}`,
-    `=password=`,
-    `=mac-address=${mac}`,
-    `=ip=${ip}`,
-  ]);
+/**
+ * Returns true if this MAC is already approved.
+ */
+export async function isDeviceApproved(
+  mac: string
+): Promise<boolean> {
+  return (await findIpBindingByMac(mac)) !== null;
 }
 
-/** Disconnect any active session for a given MAC. */
-export async function disconnectByMac(mac: string): Promise<void> {
-  const a = await findActiveByMac(mac);
-  if (!a) return;
-  await run(["/ip/hotspot/active/remove", `=.id=${a[".id"]}`]);
+/**
+ * List all approved devices.
+ */
+export async function listApprovedDevices() {
+  return (await run([
+    "/ip/hotspot/ip-binding/print",
+  ])) as Array<Record<string, string>>;
 }
 
-/** Find all hotspot users whose name starts with `prefix-` (per-student). */
-export async function listHotspotUsersForStudent(studentId: string): Promise<string[]> {
-  const res = (await run(["/ip/hotspot/user/print"])) as Array<Record<string, string>>;
-  return res
-    .filter((u) => u.name === studentId || (u.name && u.name.startsWith(`${studentId}#`)))
-    .map((u) => u[".id"]);
-}
+/**
+ * Remove every approved device belonging to a student.
+ * Uses the comment field to identify ownership.
+ */
+export async function revokeAllDevicesForStudent(
+  studentId: string
+): Promise<void> {
+  const bindings = (await run([
+    "/ip/hotspot/ip-binding/print",
+  ])) as Array<Record<string, string>>;
 
-export async function removeAllUsersForStudent(studentId: string): Promise<void> {
-  const ids = await listHotspotUsersForStudent(studentId);
-  for (const id of ids) {
-    await run(["/ip/hotspot/user/remove", `=.id=${id}`]);
+  for (const binding of bindings) {
+    if (binding.comment === studentId) {
+      await run([
+        "/ip/hotspot/ip-binding/remove",
+        `=.id=${binding[".id"]}`,
+      ]);
+    }
   }
 }
