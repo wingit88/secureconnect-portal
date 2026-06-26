@@ -1,6 +1,10 @@
 import { db } from "@/lib/db";
 import { normalize } from "@/lib/mac";
-import { isMikrotikConfigured, readHostnameByMac } from "@/lib/mikrotik";
+import {
+  clearHotspotHosts,
+  isMikrotikConfigured,
+  readHostnameByMac,
+} from "@/lib/mikrotik";
 
 /** Fetch hostname from MikroTik and persist on the Device row. */
 export async function refreshDeviceHostname(
@@ -28,11 +32,15 @@ export async function refreshDeviceHostname(
   return hostname;
 }
 
-/** Refresh hostnames for many devices (best-effort, parallel). */
+/** Refresh hostnames one at a time so RouterOS commands never pile up. */
 export async function refreshDeviceHostnames(
   devices: Array<{ id: string; macAddress: string }>,
 ): Promise<void> {
-  await Promise.allSettled(
-    devices.map((d) => refreshDeviceHostname(d.macAddress, d.id)),
-  );
+  for (const d of devices) {
+    try {
+      await refreshDeviceHostname(d.macAddress, d.id);
+    } catch {
+      // best-effort per device
+    }
+  }
 }

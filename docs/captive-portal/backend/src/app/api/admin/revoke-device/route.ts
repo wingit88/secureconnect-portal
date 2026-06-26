@@ -38,9 +38,12 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  void revokeDevice(mac).catch((err) => {
+  try {
+    await revokeDevice(mac);
+  } catch (err) {
     console.error("revoke-device router cleanup failed", err);
-  });
+    return new NextResponse("Could not reach MikroTik. Device marked revoked in database — retry or check router.", { status: 503 });
+  }
 
   return NextResponse.json({ ok: true });
 }
