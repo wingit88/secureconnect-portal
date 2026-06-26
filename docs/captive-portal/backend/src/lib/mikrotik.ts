@@ -202,8 +202,11 @@ function isBenignCommandError(err: unknown, words: string[]): boolean {
   if (isEmptyReplyError(err)) return true;
   const cmd = words[0] ?? "";
   const message = err instanceof Error ? err.message : String(err);
-  if (message.includes("UNREGISTEREDTAG") || message.includes("unregistered tag")) {
-    return true;
+  // Stale socket noise only safe to ignore on read-only print commands.
+  if (cmd.endsWith("/print")) {
+    if (message.includes("UNREGISTEREDTAG") || message.includes("unregistered tag")) {
+      return true;
+    }
   }
   // remove/set on a missing .id is not fatal for our idempotent flows
   if (cmd.endsWith("/remove") && message.includes("no such item")) return true;
@@ -271,7 +274,17 @@ async function run(words: string[]): Promise<unknown[]> {
 
 /** Run multiple RouterOS commands atomically (one queue slot, no interleaving). */
 async function runBatch(fn: () => Promise<void>): Promise<void> {
-  return enqueue(fn);
+  return enqueue(async () => {
+    checkCircuit();
+    try {
+      await fn();
+      recordSuccess();
+    } catch (err) {
+      await resetConnection(400);
+      recordFailure();
+      throw err;
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -378,7 +391,17 @@ export async function approveDevice(
       ]);
     }
 
-    await removeHostByMac(mac);
+    const bound = await findIpBindingByMac(mac);
+    if (!bound) {
+      throw new Error(`IP binding for ${mac} was not created on MikroTik`);
+    }
+
+    // Host removal forces hotspot re-evaluation; non-fatal if already gone.
+    try {
+      await removeHostByMac(mac);
+    } catch (err) {
+      console.warn("[mikrotik] host remove after approve failed (binding exists):", err);
+    }
   });
 }
 
