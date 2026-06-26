@@ -116,8 +116,6 @@ async function run(words: string[]): Promise<unknown[]> {
   }
 }
 
-const profile = () => process.env.MIKROTIK_HOTSPOT_PROFILE ?? "student-profile";
-
 /** Find an IP Binding by MAC. */
 async function findIpBindingByMac(
   mac: string

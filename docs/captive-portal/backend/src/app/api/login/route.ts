@@ -5,7 +5,6 @@ import { loginSchema } from "@/lib/validators";
 import { take } from "@/lib/rateLimit";
 import {
   approveDevice,
-  loginUser as mtLogin,
 } from "@/lib/mikrotik";
 
 export const dynamic = "force-dynamic";
@@ -76,8 +75,8 @@ export async function POST(req: NextRequest) {
       create: { macAddress: mac, studentId: created.id, approved: false, reason: "first-registration" },
     });
     // Show a waiting page that polls /api/status and auto-submits the login
-    // form once the admin approves. This triggers path 4a on the next POST,
-    // which calls loginUser(mac, ip) and evicts the walled-off hotspot session.
+    // form once the admin approves. Path 4a then creates/refreshes the IP
+    // binding and evicts the walled-off hotspot host entry.
     const waitHtml = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Waiting for approval…</title>
@@ -135,14 +134,14 @@ h1{font-size:20px;margin:0 0 12px}p{color:#475569;line-height:1.5;margin:0 0 12p
   const existingForMac = student.devices.find((d) => d.macAddress === mac);
   const successUrl = target && /^https?:\/\//i.test(target) ? target : (process.env.HOTSPOT_GATEWAY_URL ?? "http://192.168.30.1/status");
 
-  // 4a) This MAC already bound & approved -> log in
+  // 4a) This MAC already bound & approved -> refresh IP binding, bypass hotspot
   if (existingForMac && existingForMac.approved) {
-    try { await mtLogin(studentId, mac, ip); }
-    catch (err) { console.error("hotspot login failed", err); /* fall through; static MAC user should pick it up next probe */ }
+    try { await approveDevice(studentId, mac); }
+    catch (err) { console.error("ip-binding refresh failed", err); }
     return NextResponse.redirect(successUrl, { status: 302 });
   }
 
-  // 4b) No devices bound yet -> bind this MAC, add static MAC user, log in
+  // 4b) No devices bound yet -> bind this MAC with a bypassed IP binding
   if (student.devices.length === 0) {
     await db.device.upsert({
       where: { macAddress: mac },
@@ -151,7 +150,6 @@ h1{font-size:20px;margin:0 0 12px}p{color:#475569;line-height:1.5;margin:0 0 12p
     });
     try {
       await approveDevice(studentId, mac);
-      await mtLogin(studentId, mac, ip);
     } catch (err) {
       console.error("mikrotik bind failed", err);
       // roll back so admin can retry approval

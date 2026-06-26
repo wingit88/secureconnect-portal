@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { getSession } from "@/lib/auth";
-import { disconnectByMac, removeAllUsersForStudent } from "@/lib/mikrotik";
+import { revokeDevice, revokeAllDevicesForStudent } from "@/lib/mikrotik";
 
 export const dynamic = "force-dynamic";
 const schema = z.object({ studentId: z.string().min(1).max(64) });
@@ -19,8 +19,8 @@ export async function POST(req: NextRequest) {
   if (!student) return new NextResponse("Not found", { status: 404 });
 
   try {
-    await removeAllUsersForStudent(student.studentId);
-    for (const device of student.devices) await disconnectByMac(device.macAddress).catch(() => {});
+    await revokeAllDevicesForStudent(student.studentId);
+    for (const device of student.devices) await revokeDevice(device.macAddress).catch(() => {});
   } catch (err) {
     console.error("delete-student router cleanup failed", err);
   }

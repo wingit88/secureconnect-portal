@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { getSession } from "@/lib/auth";
-import { removeAllUsersForStudent, disconnectByMac } from "@/lib/mikrotik";
+import { revokeAllDevicesForStudent, revokeDevice } from "@/lib/mikrotik";
 
 export const dynamic = "force-dynamic";
 const schema = z.object({ studentId: z.string().min(1).max(64) });
@@ -20,8 +20,8 @@ export async function POST(req: NextRequest) {
 
   await db.student.update({ where: { id: s.id }, data: { status: "DENIED" } });
   try {
-    await removeAllUsersForStudent(s.studentId);
-    for (const d of s.devices) await disconnectByMac(d.macAddress).catch(() => {});
+    await revokeAllDevicesForStudent(s.studentId);
+    for (const d of s.devices) await revokeDevice(d.macAddress).catch(() => {});
   } catch (err) {
     console.error("revoke router cleanup failed", err);
   }

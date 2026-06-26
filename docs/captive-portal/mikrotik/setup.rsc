@@ -113,11 +113,8 @@ add chain=forward action=drop   in-interface=vlan20-staff    out-interface=vlan3
 /ip pool add name=hs-pool-30 ranges=192.168.30.100-192.168.30.250
 
 /ip hotspot profile add name=students-hsprof hotspot-address=192.168.30.1 \
-    dns-name=hotspot.school.lan login-by=http-pap,mac mac-auth-password="" \
+    dns-name=hotspot.school.lan login-by=http-pap \
     http-cookie-lifetime=0 use-radius=no
-
-/ip hotspot user profile add name=student-profile shared-users=unlimited \
-    address-list=students-ok
 
 /ip hotspot add name=hs-vlan30 interface=vlan30-students \
     address-pool=hs-pool-30 profile=students-hsprof disabled=no

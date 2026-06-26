@@ -48,8 +48,10 @@ VLAN 30  192.168.30.0/24   gw .1   Hotspot + external login page
   intercepts HTTP. Use `http://neverssl.com` for tests.
 - **Portal loads but `/api/login` 502s.** Backend box isn't reachable from
   VLAN 30. Check firewall rule `forward: vlan30 -> 192.168.10.2 accept`.
-- **MAC user added but device still sees portal.** Hotspot profile must have
-  `login-by=http-pap,mac` (both). `mac-auth-password` must be empty.
+- **IP binding added but device still sees portal.** Confirm the binding is
+  `type=bypassed` and the hotspot host entry was removed (the backend does
+  this automatically on approve). The client may need to reload the page or
+  wait a few seconds for the hotspot to re-evaluate.
 - **MAC formatting drift.** All code paths funnel through
   `src/lib/mac.ts::normalize()` — uppercase, colon-separated. Never store raw.
 - **Router API refuses connection.** `/ip service print` — confirm `api`
