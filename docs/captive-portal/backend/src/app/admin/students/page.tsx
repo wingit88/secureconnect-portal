@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 type Device = { id: string; macAddress: string; approved: boolean; reason: string | null };
@@ -27,6 +28,16 @@ export default function StudentsPage() {
     if (!res.ok) alert(await res.text()); else load();
   }
 
+  function handleDelete(studentId: string) {
+    if (!confirm(`Delete ${studentId} and all bound devices?`)) return;
+    void act("/api/admin/delete-student", { studentId });
+  }
+
+  function handleRevoke(studentId: string) {
+    if (!confirm(`Revoke ${studentId}?`)) return;
+    void act("/api/admin/revoke", { studentId });
+  }
+
   return (
     <div className="space-y-4">
       <h1 className="text-xl font-semibold">Students</h1>
@@ -49,38 +60,44 @@ export default function StudentsPage() {
           <tbody>
             {busy && <tr><td colSpan={4} className="p-4 text-slate-500">Loading…</td></tr>}
             {!busy && students.length === 0 && <tr><td colSpan={4} className="p-4 text-slate-500">No students.</td></tr>}
-            {students.map((s) => (
-              <tr key={s.id} className="border-t border-slate-100 align-top">
-                <td className="p-3 font-mono">{s.studentId}</td>
-                <td className="p-3"><span className={
-                  s.status === "ACTIVE" ? "text-green-700" : s.status === "DENIED" ? "text-red-700" : "text-amber-700"
-                }>{s.status}</span></td>
-                <td className="p-3">
-                  {s.devices.length === 0 ? <span className="text-slate-400">none</span> : (
-                    <ul className="space-y-1">
-                      {s.devices.map((d) => (
-                        <li key={d.id} className="font-mono text-xs">
-                          {d.macAddress} {d.approved ? "✓" : <em className="text-amber-600">pending</em>}
-                          {d.reason && <span className="text-slate-500"> — {d.reason}</span>}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </td>
-                <td className="p-3 space-x-2 whitespace-nowrap">
-                  {s.status === "PENDING" && (
-                    <button onClick={() => act("/api/admin/approve-student", { studentId: s.studentId })} className="px-2 py-1 text-xs bg-green-600 text-white rounded">Approve</button>
-                  )}
-                  {s.status !== "DENIED" && (
-                    <button onClick={() => confirm(`Revoke ${s.studentId}?`) && act("/api/admin/revoke", { studentId: s.studentId })} className="px-2 py-1 text-xs bg-red-600 text-white rounded">Revoke</button>
-                  )}
-                  <button onClick={() => confirm(`Delete ${s.studentId} and all bound devices?`) && act("/api/admin/delete-student", { studentId: s.studentId })} className="px-2 py-1 text-xs bg-rose-700 text-white rounded">Delete</button>
-                  {s.status === "PENDING" && (
-                    <button onClick={() => act("/api/admin/deny-student", { studentId: s.studentId })} className="px-2 py-1 text-xs bg-slate-700 text-white rounded">Deny</button>
-                  )}
-                </td>
-              </tr>
-            ))}
+            {students.map((s) => {
+              const approved = s.devices.filter((d) => d.approved).length;
+              const pending = s.devices.length - approved;
+              return (
+                <tr key={s.id} className="border-t border-slate-100 align-top hover:bg-slate-50">
+                  <td className="p-3">
+                    <Link href={`/admin/students/${s.id}`} className="font-mono text-slate-900 hover:text-blue-700 hover:underline">
+                      {s.studentId}
+                    </Link>
+                  </td>
+                  <td className="p-3"><span className={
+                    s.status === "ACTIVE" ? "text-green-700" : s.status === "DENIED" ? "text-red-700" : "text-amber-700"
+                  }>{s.status}</span></td>
+                  <td className="p-3">
+                    {s.devices.length === 0 ? (
+                      <span className="text-slate-400">none</span>
+                    ) : (
+                      <Link href={`/admin/students/${s.id}`} className="text-slate-700 hover:text-blue-700 hover:underline">
+                        {s.devices.length} device{s.devices.length === 1 ? "" : "s"}
+                        {pending > 0 && <span className="text-amber-600"> ({pending} pending)</span>}
+                      </Link>
+                    )}
+                  </td>
+                  <td className="p-3 space-x-2 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                    {s.status === "PENDING" && (
+                      <button onClick={() => act("/api/admin/approve-student", { studentId: s.studentId })} className="px-2 py-1 text-xs bg-green-600 text-white rounded">Approve</button>
+                    )}
+                    {s.status !== "DENIED" && (
+                      <button onClick={() => handleRevoke(s.studentId)} className="px-2 py-1 text-xs bg-red-600 text-white rounded">Revoke</button>
+                    )}
+                    <button onClick={() => handleDelete(s.studentId)} className="px-2 py-1 text-xs bg-rose-700 text-white rounded">Delete</button>
+                    {s.status === "PENDING" && (
+                      <button onClick={() => act("/api/admin/deny-student", { studentId: s.studentId })} className="px-2 py-1 text-xs bg-slate-700 text-white rounded">Deny</button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

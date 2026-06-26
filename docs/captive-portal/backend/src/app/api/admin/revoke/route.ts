@@ -9,6 +9,8 @@ const schema = z.object({ studentId: z.string().min(1).max(64) });
 
 export async function POST(req: NextRequest) {
   const session = await getSession();
+  if (!session.adminId) return new NextResponse("Unauthorized", { status: 401 });
+
   const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return new NextResponse("Invalid input", { status: 400 });
 
@@ -19,13 +21,25 @@ export async function POST(req: NextRequest) {
   if (!s) return new NextResponse("Not found", { status: 404 });
 
   await db.student.update({ where: { id: s.id }, data: { status: "DENIED" } });
-  try {
-    await revokeAllDevicesForStudent(s.studentId);
-    for (const d of s.devices) await revokeDevice(d.macAddress).catch(() => {});
-  } catch (err) {
-    console.error("revoke router cleanup failed", err);
-  }
   await db.device.updateMany({ where: { studentId: s.id }, data: { approved: false } });
-  await db.auditLog.create({ data: { actor: session.email!, action: "student.revoke", target: s.studentId } });
+  await db.auditLog.create({
+    data: {
+      actor: session.email ?? session.adminId,
+      action: "student.revoke",
+      target: s.studentId,
+    },
+  });
+
+  const routerStudentId = s.studentId;
+  const devices = s.devices.map((d) => d.macAddress);
+  void (async () => {
+    try {
+      await revokeAllDevicesForStudent(routerStudentId);
+      for (const mac of devices) await revokeDevice(mac).catch(() => {});
+    } catch (err) {
+      console.error("revoke router cleanup failed", err);
+    }
+  })();
+
   return NextResponse.json({ ok: true });
 }

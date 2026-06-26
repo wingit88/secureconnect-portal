@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { getSession } from "@/lib/auth";
-import { approveDevice } from "@/lib/mikrotik";
+import { revokeDevice } from "@/lib/mikrotik";
 import { normalize } from "@/lib/mac";
 
 export const dynamic = "force-dynamic";
@@ -20,31 +20,26 @@ export async function POST(req: NextRequest) {
     include: { student: true },
   });
   if (!device) return new NextResponse("Not found", { status: 404 });
-  if (device.student.status !== "ACTIVE") return new NextResponse("Student not ACTIVE", { status: 409 });
+  if (!device.approved) return new NextResponse("Device is not approved", { status: 409 });
 
   const mac = normalize(device.macAddress);
 
   await db.device.update({
     where: { id: device.id },
-    data: { approved: true, reason: null },
+    data: { approved: false, reason: "revoked-by-admin" },
   });
 
   await db.auditLog.create({
     data: {
       actor: session.email ?? session.adminId,
-      action: "device.approve",
+      action: "device.revoke",
       target: mac,
       meta: device.student.studentId,
     },
   });
 
-  // Keep the admin response fast; RouterOS sync can lag without blocking the UI.
-  void approveDevice(device.student.studentId, mac).catch(async (err) => {
-    console.error("approve-device ip-binding failed", err);
-    await db.device.update({
-      where: { id: device.id },
-      data: { approved: false, reason: "router-bind-failed" },
-    }).catch(() => {});
+  void revokeDevice(mac).catch((err) => {
+    console.error("revoke-device router cleanup failed", err);
   });
 
   return NextResponse.json({ ok: true });

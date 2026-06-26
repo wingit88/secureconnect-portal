@@ -56,5 +56,9 @@ VLAN 30  192.168.30.0/24   gw .1   Hotspot + external login page
   `src/lib/mac.ts::normalize()` — uppercase, colon-separated. Never store raw.
 - **Router API refuses connection.** `/ip service print` — confirm `api`
   is enabled, address-list includes `192.168.10.0/24`.
+- **Router API calls hang or time out.** Check `MIKROTIK_*_TIMEOUT_MS` in
+  `.env` and that TCP port 8728 is allowed on the router input chain. After
+  repeated failures the backend opens a circuit breaker for 30s (see
+  `MIKROTIK_CIRCUIT_*` vars).
 
 See `mikrotik/setup.rsc`, `backend/`, and `DEPLOY.md`.

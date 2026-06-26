@@ -1,9 +1,10 @@
 "use client";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
 type Row = {
   id: string; macAddress: string; reason: string | null; createdAt: string;
-  student: { studentId: string; status: string };
+  student: { id: string; studentId: string; status: string };
 };
 
 export default function DevicesPage() {
@@ -12,13 +13,12 @@ export default function DevicesPage() {
 
   async function load() {
     setBusy(true);
-    // reuse /api/admin/students and flatten pending devices
     const res = await fetch("/api/admin/students");
     const data = await res.json();
     const flat: Row[] = [];
     for (const s of data.students) {
       for (const d of s.devices) {
-        if (!d.approved) flat.push({ ...d, student: { studentId: s.studentId, status: s.status } });
+        if (!d.approved) flat.push({ ...d, student: { id: s.id, studentId: s.studentId, status: s.status } });
       }
     }
     setRows(flat);
@@ -29,6 +29,11 @@ export default function DevicesPage() {
   async function act(path: string, payload: object) {
     const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     if (!res.ok) alert(await res.text()); else load();
+  }
+
+  function handleReject(deviceId: string, mac: string) {
+    if (!confirm(`Reject device ${mac}?`)) return;
+    void act("/api/admin/reject-device", { deviceId });
   }
 
   return (
@@ -44,7 +49,12 @@ export default function DevicesPage() {
             {!busy && rows.length === 0 && <tr><td colSpan={4} className="p-4 text-slate-500">No pending requests.</td></tr>}
             {rows.map((r) => (
               <tr key={r.id} className="border-t border-slate-100">
-                <td className="p-3 font-mono">{r.student.studentId} <span className="text-xs text-slate-500">({r.student.status})</span></td>
+                <td className="p-3">
+                  <Link href={`/admin/students/${r.student.id}`} className="font-mono text-slate-900 hover:text-blue-700 hover:underline">
+                    {r.student.studentId}
+                  </Link>
+                  <span className="text-xs text-slate-500 ml-1">({r.student.status})</span>
+                </td>
                 <td className="p-3 font-mono">{r.macAddress}</td>
                 <td className="p-3">{r.reason ?? "—"}</td>
                 <td className="p-3 space-x-2 whitespace-nowrap">
@@ -52,7 +62,7 @@ export default function DevicesPage() {
                     disabled={r.student.status !== "ACTIVE"}
                     title={r.student.status !== "ACTIVE" ? "Approve the student first" : ""}
                     className="px-2 py-1 text-xs bg-green-600 text-white rounded disabled:opacity-40">Approve</button>
-                  <button onClick={() => act("/api/admin/reject-device", { deviceId: r.id })}
+                  <button onClick={() => handleReject(r.id, r.macAddress)}
                     className="px-2 py-1 text-xs bg-red-600 text-white rounded">Reject</button>
                 </td>
               </tr>

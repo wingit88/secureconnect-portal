@@ -1,49 +1,48 @@
-// Eager patch for node-routeros Channel to ignore the !empty reply.
-// This module is intentionally side-effecting and should be imported
-// very early in the server runtime (for example from middleware.ts)
-// so the Channel.prototype.onUnknown handler is replaced before any
-// RouterOS connection is established by other modules.
+// Eager patch for node-routeros Channel to treat !empty as a normal empty result.
+// Import this very early (middleware.ts) so the handler is in place before any
+// RouterOS connection is opened.
+
+let patched = false;
 
 function applyEmptyPatch(): void {
+  if (patched) return;
   try {
-    // Try a few ways to locate the Channel class across packaging shapes.
-    // @ts-ignore
-    let mod: any;
+    // @ts-ignore — require is available at runtime in Next.js server bundles
+    let mod: unknown;
     try {
       mod = require("node-routeros/dist/Channel");
-    } catch (_) {
+    } catch {
       try {
-        const root = require("node-routeros");
-        mod = root;
-      } catch (e) {
+        mod = require("node-routeros");
+      } catch {
         mod = undefined;
       }
     }
 
+    const record = mod as Record<string, unknown> | undefined;
     const Channel =
-      (mod && typeof mod === "function" ? mod : undefined) ||
-      (mod?.Channel && typeof mod.Channel === "function" ? mod.Channel : undefined) ||
-      (mod?.default && typeof mod.default === "function" ? mod.default : undefined) ||
-      (mod?.default?.Channel && typeof mod.default.Channel === "function" ? mod.default.Channel : undefined) ||
-      (mod?.dist?.Channel && typeof mod.dist.Channel === "function" ? mod.dist.Channel : undefined);
-    if (!Channel || !Channel.prototype) return;
+      (typeof mod === "function" ? mod : undefined)
+      ?? (typeof record?.Channel === "function" ? record.Channel : undefined)
+      ?? (typeof record?.default === "function" ? record.default : undefined)
+      ?? (typeof (record?.default as Record<string, unknown> | undefined)?.Channel === "function"
+        ? (record!.default as { Channel: new (...args: unknown[]) => unknown }).Channel
+        : undefined);
 
-    const origOnUnknown = Channel.prototype.onUnknown;
-    Channel.prototype.onUnknown = function (reply: string): void {
-      try {
-        if (reply === "!empty") {
-          try { this.emit("done", []); } catch {}
-          try { this.close(); } catch {}
-          return;
-        }
-      } catch (_e) {
-        // swallow
+    if (!Channel || !(Channel as { prototype?: unknown }).prototype) return;
+
+    const proto = (Channel as { prototype: { onUnknown?: (reply: string) => void } }).prototype;
+    const origOnUnknown = proto.onUnknown;
+    proto.onUnknown = function (reply: string): void {
+      if (reply === "!empty") {
+        try { (this as { emit: (e: string, d: unknown[]) => void }).emit("done", []); } catch { /* ignore */ }
+        try { (this as { close: () => void }).close(); } catch { /* ignore */ }
+        return;
       }
       if (origOnUnknown) origOnUnknown.call(this, reply);
     };
-  } catch (e) {
-    // Intentionally silent; we'll log where appropriate elsewhere.
-    // Avoid throwing during server startup.
+    patched = true;
+  } catch {
+    // Avoid throwing during server startup; mikrotik.ts logs if commands fail.
   }
 }
 
