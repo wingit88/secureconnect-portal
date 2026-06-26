@@ -57,15 +57,12 @@ function makeClient(): RouterOSAPI {
   });
 }
 
-async function resetConnection(waitMs = 0): Promise<void> {
+function resetConnection(): void {
   if (conn) {
-    try { await conn.close(); } catch { /* ignore */ }
+    try { conn.close(); } catch { /* ignore */ }
   }
   conn = null;
   connectPromise = null;
-  if (waitMs > 0) {
-    await new Promise((r) => setTimeout(r, waitMs));
-  }
 }
 
 function setupClientHandlers(c: RouterOSAPI): void {
@@ -78,11 +75,7 @@ function setupClientHandlers(c: RouterOSAPI): void {
 
   c.on("error", (err: unknown) => {
     const msg = err instanceof Error ? err.message : String(err);
-    const benign =
-      msg.includes("!empty") ||
-      msg.includes("UNREGISTEREDTAG") ||
-      msg.includes("unregistered tag");
-    if (!benign) {
+    if (!msg.includes("!empty")) {
       console.error("[mikrotik] connection error:", err);
     }
     try { c.close(); } catch { /* ignore */ }
@@ -90,15 +83,9 @@ function setupClientHandlers(c: RouterOSAPI): void {
   });
 }
 
-function withTimeout<T>(
-  promise: Promise<T>,
-  ms: number,
-  label: string,
-  onTimeout?: () => void,
-): Promise<T> {
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
-      onTimeout?.();
       reject(new Error(`RouterOS ${label} timed out after ${ms}ms`));
     }, ms);
     promise.then(
@@ -124,7 +111,7 @@ function recordSuccess(): void {
 
 function recordFailure(): void {
   consecutiveFailures += 1;
-  void resetConnection(500);
+  resetConnection();
   if (consecutiveFailures >= CIRCUIT_THRESHOLD) {
     circuitOpenUntil = Date.now() + CIRCUIT_COOLDOWN_MS;
     console.error(
@@ -202,21 +189,10 @@ function isBenignCommandError(err: unknown, words: string[]): boolean {
   if (isEmptyReplyError(err)) return true;
   const cmd = words[0] ?? "";
   const message = err instanceof Error ? err.message : String(err);
-  // Stale socket noise only safe to ignore on read-only print commands.
-  if (cmd.endsWith("/print")) {
-    if (message.includes("UNREGISTEREDTAG") || message.includes("unregistered tag")) {
-      return true;
-    }
-  }
   // remove/set on a missing .id is not fatal for our idempotent flows
   if (cmd.endsWith("/remove") && message.includes("no such item")) return true;
   if (cmd.endsWith("/remove") && message.includes("invalid value")) return true;
   return false;
-}
-
-function isTimeoutError(err: unknown): boolean {
-  const message = err instanceof Error ? err.message : String(err);
-  return message.includes("timed out");
 }
 
 function formatCommand(words: string[]): string {
@@ -225,12 +201,12 @@ function formatCommand(words: string[]): string {
 
 async function runOnce(words: string[]): Promise<unknown[]> {
   const c = await getConn();
-  return withTimeout(
+  const result = await withTimeout(
     c.write(words) as Promise<unknown[]>,
     COMMAND_TIMEOUT_MS,
     formatCommand(words),
-    () => { void resetConnection(400); },
   );
+  return result;
 }
 
 async function runInternal(words: string[]): Promise<unknown[]> {
@@ -255,10 +231,11 @@ async function runInternal(words: string[]): Promise<unknown[]> {
         err instanceof Error ? err.message : err,
       );
 
-      await resetConnection(isTimeoutError(err) ? 600 : 300);
+      resetConnection();
 
       if (attempt < MAX_RETRIES) {
-        await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+        // brief pause before retry so the router can accept a new socket
+        await new Promise((r) => setTimeout(r, 250 * (attempt + 1)));
         continue;
       }
     }
@@ -272,30 +249,15 @@ async function run(words: string[]): Promise<unknown[]> {
   return enqueue(() => runInternal(words));
 }
 
-/** Run multiple RouterOS commands atomically (one queue slot, no interleaving). */
-async function runBatch(fn: () => Promise<void>): Promise<void> {
-  return enqueue(async () => {
-    checkCircuit();
-    try {
-      await fn();
-      recordSuccess();
-    } catch (err) {
-      await resetConnection(400);
-      recordFailure();
-      throw err;
-    }
-  });
-}
-
 // ---------------------------------------------------------------------------
-// Hotspot helpers (use runBatch for multi-step ops)
+// Hotspot helpers
 // ---------------------------------------------------------------------------
 
 /** Find an IP Binding by MAC. */
 async function findIpBindingByMac(
   mac: string,
 ): Promise<{ ".id": string } | null> {
-  const res = (await runInternal([
+  const res = (await run([
     "/ip/hotspot/ip-binding/print",
     `?mac-address=${mac}`,
   ])) as Array<Record<string, string>>;
@@ -307,22 +269,12 @@ async function findIpBindingByMac(
 async function findHostByMac(
   mac: string,
 ): Promise<{ ".id": string } | null> {
-  const res = (await runInternal([
+  const res = (await run([
     "/ip/hotspot/host/print",
     `?mac-address=${mac}`,
   ])) as Array<Record<string, string>>;
 
   return res.length ? { ".id": res[0][".id"] } : null;
-}
-
-async function removeHostByMac(mac: string): Promise<void> {
-  const host = await findHostByMac(mac);
-  if (host) {
-    await runInternal([
-      "/ip/hotspot/host/remove",
-      `=.id=${host[".id"]}`,
-    ]);
-  }
 }
 
 function pickHostname(row: Record<string, string>): string | null {
@@ -336,28 +288,26 @@ function pickHostname(row: Record<string, string>): string | null {
  * Call before approveDevice() removes the host entry.
  */
 export async function readHostnameByMac(mac: string): Promise<string | null> {
-  return enqueue(async () => {
-    const hosts = (await runInternal([
-      "/ip/hotspot/host/print",
-      `?mac-address=${mac}`,
-    ])) as Array<Record<string, string>>;
+  const hosts = (await run([
+    "/ip/hotspot/host/print",
+    `?mac-address=${mac}`,
+  ])) as Array<Record<string, string>>;
 
-    if (hosts.length > 0) {
-      const name = pickHostname(hosts[0]);
-      if (name) return name;
-    }
+  if (hosts.length > 0) {
+    const name = pickHostname(hosts[0]);
+    if (name) return name;
+  }
 
-    const leases = (await runInternal([
-      "/ip/dhcp-server/lease/print",
-      `?mac-address=${mac}`,
-    ])) as Array<Record<string, string>>;
+  const leases = (await run([
+    "/ip/dhcp-server/lease/print",
+    `?mac-address=${mac}`,
+  ])) as Array<Record<string, string>>;
 
-    if (leases.length > 0) {
-      return pickHostname(leases[0]);
-    }
+  if (leases.length > 0) {
+    return pickHostname(leases[0]);
+  }
 
-    return null;
-  });
+  return null;
 }
 
 /**
@@ -371,38 +321,32 @@ export async function approveDevice(
   studentId: string,
   mac: string,
 ): Promise<void> {
-  return runBatch(async () => {
-    const existing = await findIpBindingByMac(mac);
+  const existing = await findIpBindingByMac(mac);
 
-    if (existing) {
-      await runInternal([
-        "/ip/hotspot/ip-binding/set",
-        `=.id=${existing[".id"]}`,
-        "=type=bypassed",
-        "=disabled=no",
-        `=comment=${studentId}`,
-      ]);
-    } else {
-      await runInternal([
-        "/ip/hotspot/ip-binding/add",
-        `=mac-address=${mac}`,
-        "=type=bypassed",
-        `=comment=${studentId}`,
-      ]);
-    }
+  if (existing) {
+    await run([
+      "/ip/hotspot/ip-binding/set",
+      `=.id=${existing[".id"]}`,
+      "=type=bypassed",
+      "=disabled=no",
+      `=comment=${studentId}`,
+    ]);
+  } else {
+    await run([
+      "/ip/hotspot/ip-binding/add",
+      `=mac-address=${mac}`,
+      "=type=bypassed",
+      `=comment=${studentId}`,
+    ]);
+  }
 
-    const bound = await findIpBindingByMac(mac);
-    if (!bound) {
-      throw new Error(`IP binding for ${mac} was not created on MikroTik`);
-    }
-
-    // Host removal forces hotspot re-evaluation; non-fatal if already gone.
-    try {
-      await removeHostByMac(mac);
-    } catch (err) {
-      console.warn("[mikrotik] host remove after approve failed (binding exists):", err);
-    }
-  });
+  const host = await findHostByMac(mac);
+  if (host) {
+    await run([
+      "/ip/hotspot/host/remove",
+      `=.id=${host[".id"]}`,
+    ]);
+  }
 }
 
 /**
@@ -412,30 +356,26 @@ export async function approveDevice(
  * is redirected back to the captive portal.
  */
 export async function revokeDevice(mac: string): Promise<void> {
-  return runBatch(async () => {
-    const binding = await findIpBindingByMac(mac);
-    if (binding) {
-      await runInternal([
-        "/ip/hotspot/ip-binding/remove",
-        `=.id=${binding[".id"]}`,
-      ]);
-    }
-    await removeHostByMac(mac);
-  });
+  const binding = await findIpBindingByMac(mac);
+  if (binding) {
+    await run([
+      "/ip/hotspot/ip-binding/remove",
+      `=.id=${binding[".id"]}`,
+    ]);
+  }
+
+  const host = await findHostByMac(mac);
+  if (host) {
+    await run([
+      "/ip/hotspot/host/remove",
+      `=.id=${host[".id"]}`,
+    ]);
+  }
 }
 
 /** Returns true if this MAC is already approved on the router. */
 export async function isDeviceApproved(mac: string): Promise<boolean> {
-  return enqueue(async () => (await findIpBindingByMac(mac)) !== null);
-}
-
-/** Remove hotspot host entries for a list of MACs (bindings untouched). */
-export async function clearHotspotHosts(macAddresses: string[]): Promise<void> {
-  return runBatch(async () => {
-    for (const mac of macAddresses) {
-      await removeHostByMac(mac);
-    }
-  });
+  return (await findIpBindingByMac(mac)) !== null;
 }
 
 /** List all IP bindings on the hotspot. */
@@ -452,21 +392,19 @@ export async function listApprovedDevices() {
 export async function revokeAllDevicesForStudent(
   studentId: string,
 ): Promise<void> {
-  return runBatch(async () => {
-    const bindings = (await runInternal([
-      "/ip/hotspot/ip-binding/print",
-      `?comment=${studentId}`,
-    ])) as Array<Record<string, string>>;
+  const bindings = (await run([
+    "/ip/hotspot/ip-binding/print",
+    `?comment=${studentId}`,
+  ])) as Array<Record<string, string>>;
 
-    for (const binding of bindings) {
-      if (binding.comment === studentId && binding[".id"]) {
-        await runInternal([
-          "/ip/hotspot/ip-binding/remove",
-          `=.id=${binding[".id"]}`,
-        ]);
-      }
+  for (const binding of bindings) {
+    if (binding.comment === studentId && binding[".id"]) {
+      await run([
+        "/ip/hotspot/ip-binding/remove",
+        `=.id=${binding[".id"]}`,
+      ]);
     }
-  });
+  }
 }
 
 /** Lightweight connectivity probe for admin diagnostics. */

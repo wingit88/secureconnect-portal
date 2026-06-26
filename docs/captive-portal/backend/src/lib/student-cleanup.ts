@@ -1,10 +1,6 @@
 import { db } from "@/lib/db";
 import { normalize } from "@/lib/mac";
-import {
-  clearHotspotHosts,
-  revokeAllDevicesForStudent,
-  revokeDevice,
-} from "@/lib/mikrotik";
+import { revokeAllDevicesForStudent, revokeDevice } from "@/lib/mikrotik";
 
 type StudentWithDevices = {
   id: string;
@@ -24,24 +20,18 @@ export async function markAllDevicesRevokedInDb(
   return result.count;
 }
 
-/**
- * Remove MikroTik bindings (by student comment) and hotspot host rows per MAC.
- * Uses two batched operations instead of redundant per-device binding lookups.
- */
+/** Remove MikroTik IP bindings and hotspot host entries for all of a student's devices. */
 export async function revokeAllDevicesOnRouter(
   routerStudentId: string,
   macAddresses: string[],
 ): Promise<void> {
-  const macs = macAddresses.map((m) => normalize(m));
-  try {
-    await revokeAllDevicesForStudent(routerStudentId);
-  } catch (err) {
-    console.warn("[student-cleanup] comment-based binding removal failed", err);
-  }
-  try {
-    await clearHotspotHosts(macs);
-  } catch (err) {
-    console.warn("[student-cleanup] host cleanup failed", err);
+  await revokeAllDevicesForStudent(routerStudentId);
+  for (const raw of macAddresses) {
+    try {
+      await revokeDevice(normalize(raw));
+    } catch {
+      // Per-device failures must not block the rest.
+    }
   }
 }
 
@@ -82,9 +72,4 @@ export async function deleteStudentAndDevices(
   scheduleRevokeAllDevicesOnRouter(routerStudentId, macs);
 
   return { devicesDeleted };
-}
-
-/** Revoke a single device on MikroTik (awaited — use from device revoke route). */
-export async function revokeSingleDeviceOnRouter(macAddress: string): Promise<void> {
-  await revokeDevice(normalize(macAddress));
 }

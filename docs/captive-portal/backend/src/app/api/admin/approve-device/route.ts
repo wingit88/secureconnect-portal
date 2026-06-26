@@ -27,10 +27,15 @@ export async function POST(req: NextRequest) {
 
   const mac = normalize(device.macAddress);
   const wasApproved = device.approved;
+  const hostname = await refreshDeviceHostname(mac, device.id).catch(() => null);
 
   await db.device.update({
     where: { id: device.id },
-    data: { approved: true, reason: null },
+    data: {
+      approved: true,
+      reason: null,
+      ...(hostname ? { hostname } : {}),
+    },
   });
 
   await db.auditLog.create({
@@ -42,18 +47,13 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  try {
-    await approveDevice(device.student.studentId, mac);
-  } catch (err) {
+  void approveDevice(device.student.studentId, mac).catch(async (err) => {
     console.error("approve-device ip-binding failed", err);
     await db.device.update({
       where: { id: device.id },
       data: { approved: false, reason: "router-bind-failed" },
     }).catch(() => {});
-    return new NextResponse("Could not reach MikroTik. Try again.", { status: 503 });
-  }
-
-  void refreshDeviceHostname(mac, device.id).catch(() => {});
+  });
 
   return NextResponse.json({ ok: true });
 }
