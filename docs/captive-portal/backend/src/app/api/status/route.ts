@@ -7,15 +7,21 @@ export const dynamic = "force-dynamic";
 /**
  * GET /api/status?mac=AA:BB:CC:DD:EE:FF
  *
- * Returns the approval state for a device MAC so the waiting page can poll
- * and auto-submit the login form once the admin approves the student+device.
+ * Used by the waiting page to detect when the admin has approved both the
+ * student account and this device.
  *
- * Response: { approved: boolean, studentStatus: "PENDING"|"ACTIVE"|"DENIED"|null }
+ * Response:
+ *   ready          — true when student is ACTIVE and device is approved
+ *   approved       — device.approved in the database
+ *   studentStatus  — "PENDING" | "ACTIVE" | "DENIED" | null
  */
 export async function GET(req: NextRequest) {
   const mac = safeNormalize(req.nextUrl.searchParams.get("mac") ?? "");
   if (!mac) {
-    return NextResponse.json({ approved: false, studentStatus: null }, { status: 400 });
+    return NextResponse.json(
+      { ready: false, approved: false, studentStatus: null },
+      { status: 400 },
+    );
   }
 
   const device = await db.device.findUnique({
@@ -23,10 +29,12 @@ export async function GET(req: NextRequest) {
     include: { student: { select: { status: true } } },
   }).catch(() => null);
 
-  return NextResponse.json({
-    approved: device?.approved ?? false,
-    studentStatus: device?.student?.status ?? null,
-  }, {
-    headers: { "Cache-Control": "no-store" },
-  });
+  const approved = device?.approved ?? false;
+  const studentStatus = device?.student?.status ?? null;
+  const ready = approved && studentStatus === "ACTIVE";
+
+  return NextResponse.json(
+    { ready, approved, studentStatus },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

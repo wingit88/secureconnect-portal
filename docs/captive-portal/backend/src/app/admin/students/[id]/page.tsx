@@ -37,9 +37,10 @@ export default function StudentDetailPage() {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    if (!id) return;
     setBusy(true);
     setError(null);
-    const res = await fetch(`/api/admin/students/${id}`, { cache: "no-store" });
+    const res = await fetch(`/api/admin/students/${encodeURIComponent(id)}`, { cache: "no-store" });
     if (!res.ok) {
       setError(res.status === 404 ? "Student not found." : await res.text());
       setStudent(null);
@@ -51,7 +52,10 @@ export default function StudentDetailPage() {
     setBusy(false);
   }, [id]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!id) return;
+    void load();
+  }, [id, load]);
 
   async function act(path: string, payload: object, opts?: { redirect?: string }) {
     const res = await fetch(path, {
@@ -68,6 +72,10 @@ export default function StudentDetailPage() {
       return;
     }
     await load();
+  }
+
+  if (!id) {
+    return <p className="text-slate-500">Loading…</p>;
   }
 
   if (busy && !student) {
