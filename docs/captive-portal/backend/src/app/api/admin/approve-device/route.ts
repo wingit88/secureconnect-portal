@@ -47,13 +47,16 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  void approveDevice(device.student.studentId, mac).catch(async (err) => {
-    console.error("approve-device ip-binding failed", err);
+  try {
+    await approveDevice(device.student.studentId, mac);
+  } catch (err) {
+    console.error("approve-device hotspot-user sync failed", err);
     await db.device.update({
       where: { id: device.id },
       data: { approved: false, reason: "router-bind-failed" },
     }).catch(() => {});
-  });
+    return new NextResponse("Router sync failed, please retry", { status: 503 });
+  }
 
   return NextResponse.json({ ok: true });
 }

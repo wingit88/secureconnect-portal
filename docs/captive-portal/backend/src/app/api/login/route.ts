@@ -26,6 +26,16 @@ h1{font-size:20px;margin:0 0 12px}p{color:#475569;line-height:1.5;margin:0}</sty
   return new Response(html, { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 }
 
+function alreadyApprovedPage(target: string): Response {
+  const safeTarget = /^https?:\/\//i.test(target) ? target : "http://192.168.30.1/status";
+  return page(
+    "Device already approved",
+    `<p>You can access internet now.</p>
+     <p style="margin-top:12px"><a href="${esc(safeTarget)}" style="color:#0f172a;font-weight:600;text-decoration:underline">Continue</a></p>
+     <script>setTimeout(function(){ window.location.href = ${JSON.stringify(safeTarget)}; }, 1500);</script>`,
+  );
+}
+
 function reasonForm(studentId: string, nama: string, kelas: string, mac: string, ip: string, target: string): Response {
   return page(
     "Additional device request",
@@ -113,39 +123,49 @@ export async function POST(req: NextRequest) {
   // 4) ACTIVE
   const existingForMac = student.devices.find((d) => d.macAddress === mac);
   const successUrl = target && /^https?:\/\//i.test(target) ? target : (process.env.HOTSPOT_GATEWAY_URL ?? "http://192.168.30.1/status");
+  const approvedDeviceCount = student.devices.filter((d) => d.approved).length;
 
-  // 4a) This MAC already bound & approved -> refresh IP binding, bypass hotspot
+  // 4a) This MAC already approved -> refresh router auth and show success page
   if (existingForMac && existingForMac.approved) {
-    try { await approveDevice(studentId, mac); }
-    catch (err) { console.error("ip-binding refresh failed", err); }
-    return NextResponse.redirect(successUrl, { status: 302 });
+    return alreadyApprovedPage(successUrl);
   }
 
-  // 4b) No devices bound yet -> bind this MAC with a bypassed IP binding
-  if (student.devices.length === 0) {
+  // 4b) Existing pending row for this MAC -> avoid asking for the reason again.
+  if (existingForMac && !existingForMac.approved) {
+    return page(
+      "Request already submitted",
+      "<p>This device is still waiting for administrator approval.</p>",
+    );
+  }
+
+  // 4c) No approved device yet -> auto-approve this as first usable device
+  if (approvedDeviceCount === 0) {
     await db.device.upsert({
       where: { macAddress: mac },
       update: { studentId: student.id, approved: true, reason: null },
       create: { macAddress: mac, studentId: student.id, approved: true },
     });
     try {
-      await approveDevice(studentId, mac);
+      await approveDevice(studentId, mac, ip);
     } catch (err) {
-      console.error("mikrotik bind failed", err);
+      console.error("mikrotik hotspot-user sync failed", err);
       // roll back so admin can retry approval
       await db.device.update({ where: { macAddress: mac }, data: { approved: false, reason: "router-bind-failed" } });
       return page("Network busy", "<p>Couldn't reach the network controller. Please try again in a minute.</p>", 503);
     }
-    return NextResponse.redirect(successUrl, { status: 302 });
+    return alreadyApprovedPage(successUrl);
   }
 
-  // 4c) Different MAC already bound -> require reason, create pending request
-  if (!reason) return reasonForm(studentId, student.nama, student.kelas, mac, ip, target ?? "");
+  // 4d) Student already has approved device(s) -> require reason for additional device
+  const normalizedReason = reason?.trim() ?? "";
+  if (normalizedReason.length < 5) {
+    return reasonForm(studentId, student.nama, student.kelas, mac, ip, target ?? "");
+  }
 
   await db.device.upsert({
     where: { macAddress: mac },
-    update: { studentId: student.id, approved: false, reason },
-    create: { macAddress: mac, studentId: student.id, approved: false, reason },
+    update: { studentId: student.id, approved: false, reason: normalizedReason },
+    create: { macAddress: mac, studentId: student.id, approved: false, reason: normalizedReason },
   });
   void refreshDeviceHostname(mac).catch(() => {});
   return page(
