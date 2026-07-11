@@ -8,6 +8,9 @@ import {
 } from "@/lib/mikrotik";
 import { refreshDeviceHostname } from "@/lib/device-sync";
 import { buildWaitingPage } from "@/lib/wait-page";
+import { resolveContinueUrl } from "@/lib/hotspot";
+import { portalPublicBase, portalUrl } from "@/lib/portal-url";
+import { shouldBlockPortalAccess } from "@/lib/access-policy";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +30,7 @@ h1{font-size:20px;margin:0 0 12px}p{color:#475569;line-height:1.5;margin:0}</sty
 }
 
 function alreadyApprovedPage(target: string): Response {
-  const safeTarget = /^https?:\/\//i.test(target) ? target : "http://192.168.30.1/status";
+  const safeTarget = resolveContinueUrl(target);
   return page(
     "Device already approved",
     `<p>You can access internet now.</p>
@@ -36,11 +39,20 @@ function alreadyApprovedPage(target: string): Response {
   );
 }
 
-function reasonForm(studentId: string, nama: string, kelas: string, mac: string, ip: string, target: string): Response {
+function reasonForm(
+  studentId: string,
+  nama: string,
+  kelas: string,
+  mac: string,
+  ip: string,
+  target: string,
+  portalBase: string,
+): Response {
+  const loginUrl = `${portalBase}/api/login`;
   return page(
     "Additional device request",
     `<p style="margin-bottom:16px">You already have a registered device. Tell the admin why you need to add this one.</p>
-     <form method="POST" action="/api/login" style="text-align:left">
+     <form method="POST" action="${esc(loginUrl)}" style="text-align:left">
        <input type="hidden" name="studentId" value="${esc(studentId)}">
        <input type="hidden" name="nama" value="${esc(nama)}">
        <input type="hidden" name="kelas" value="${esc(kelas)}">
@@ -67,6 +79,7 @@ async function parseBody(req: NextRequest): Promise<Record<string, string>> {
 }
 
 export async function POST(req: NextRequest) {
+  const portalBase = portalPublicBase(req);
   const raw = await parseBody(req);
   const parsed = loginSchema.safeParse(raw);
   if (!parsed.success) return page("Invalid request", parsed.error.issues[0]?.message ?? "Bad input", 400);
@@ -94,14 +107,16 @@ export async function POST(req: NextRequest) {
       create: { macAddress: mac, studentId: created.id, approved: false, reason: "first-registration" },
     });
     void refreshDeviceHostname(mac, device.id).catch(() => {});
-    const waitHtml = buildWaitingPage({ studentId, nama, kelas, mac, ip, target: target ?? "" });
+    const waitHtml = buildWaitingPage({ studentId, nama, kelas, mac, ip, target: target ?? "", portalBase });
     return new Response(waitHtml, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
 
   }
 
-  // 2) Denied
-  if (student.status === "DENIED") {
-    return NextResponse.redirect(new URL("/api/denied", req.url));
+  const currentDevice = student.devices.find((d) => d.macAddress === mac) ?? null;
+
+  // 2) Denied or revoked
+  if (shouldBlockPortalAccess(student.status, currentDevice)) {
+    return NextResponse.redirect(portalUrl("/api/denied", req));
   }
 
   // 3) Pending — keep polling so the page updates when admin approves
@@ -113,6 +128,7 @@ export async function POST(req: NextRequest) {
       mac,
       ip,
       target: target ?? "",
+      portalBase,
     });
     return new Response(waitHtml, {
       status: 200,
@@ -122,7 +138,7 @@ export async function POST(req: NextRequest) {
 
   // 4) ACTIVE
   const existingForMac = student.devices.find((d) => d.macAddress === mac);
-  const successUrl = target && /^https?:\/\//i.test(target) ? target : (process.env.HOTSPOT_GATEWAY_URL ?? "http://192.168.30.1/status");
+  const successUrl = resolveContinueUrl(target ?? "");
   const approvedDeviceCount = student.devices.filter((d) => d.approved).length;
 
   // 4a) This MAC already approved -> refresh router auth and show success page
@@ -159,7 +175,7 @@ export async function POST(req: NextRequest) {
   // 4d) Student already has approved device(s) -> require reason for additional device
   const normalizedReason = reason?.trim() ?? "";
   if (normalizedReason.length < 5) {
-    return reasonForm(studentId, student.nama, student.kelas, mac, ip, target ?? "");
+    return reasonForm(studentId, student.nama, student.kelas, mac, ip, target ?? "", portalBase);
   }
 
   await db.device.upsert({

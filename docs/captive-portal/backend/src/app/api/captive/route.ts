@@ -1,6 +1,10 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { safeNormalize } from "@/lib/mac";
 import { db } from "@/lib/db";
+import { buildWaitingPage } from "@/lib/wait-page";
+import { resolveContinueUrl } from "@/lib/hotspot";
+import { portalPublicBase, portalUrl } from "@/lib/portal-url";
+import { shouldBlockPortalAccess } from "@/lib/access-policy";
 
 export const dynamic = "force-dynamic";
 
@@ -10,28 +14,20 @@ function esc(s: string): string {
   );
 }
 
-export async function GET(req: NextRequest) {
-  const u = req.nextUrl;
-  const mac = safeNormalize(u.searchParams.get("mac")) ?? "";
-  const ip = u.searchParams.get("ip") ?? "";
-  const target = u.searchParams.get("target") ?? "";
+function htmlResponse(body: string, status = 200): Response {
+  return new Response(body, {
+    status,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+    },
+  });
+}
 
-  if (mac) {
-    const device = await db.device.findUnique({
-      where: { macAddress: mac },
-      include: { student: { select: { status: true } } },
-    }).catch(() => null);
+function buildApprovedPage(continueUrl: string): string {
+  const probeUrl = process.env.HOTSPOT_PROBE_URL ?? "http://neverssl.com/favicon.ico";
 
-    if (device?.approved && device.student?.status === "ACTIVE") {
-      const continueUrl = /^https?:\/\//i.test(target)
-        ? target
-        : (process.env.HOTSPOT_GATEWAY_URL ?? "http://192.168.30.1/status");
-
-      // Must be plain http:// and NOT whitelisted in the hotspot walled garden,
-      // otherwise the probe always "succeeds" without ever touching mac-auth.
-      const probeUrl = process.env.HOTSPOT_PROBE_URL ?? "http://neverssl.com/favicon.ico";
-
-      const approvedHtml = `<!doctype html>
+  return `<!doctype html>
 <html lang="id">
 <head>
   <meta charset="utf-8">
@@ -58,7 +54,7 @@ export async function GET(req: NextRequest) {
       var continueUrl = ${JSON.stringify(continueUrl)};
       var probeBase = ${JSON.stringify(probeUrl)};
       var attempts = 0;
-      var maxAttempts = 20;      // ~20s worth of retries
+      var maxAttempts = 20;
       var intervalMs = 1000;
 
       function goOnline() {
@@ -100,7 +96,6 @@ export async function GET(req: NextRequest) {
           onFail();
         };
 
-        // cache-bust so we never read a cached success/failure
         img.src = probeBase + (probeBase.indexOf("?") >= 0 ? "&" : "?") + "cb=" + Date.now();
       }
 
@@ -117,18 +112,11 @@ export async function GET(req: NextRequest) {
   </script>
 </body>
 </html>`;
+}
 
-      return new Response(approvedHtml, {
-        status: 200,
-        headers: {
-          "Content-Type": "text/html; charset=utf-8",
-          "Cache-Control": "no-store",
-        },
-      });
-    }
-  }
-
-  const html = `<!doctype html>
+function buildLoginPage(mac: string, ip: string, target: string, portalBase: string): string {
+  const loginUrl = `${portalBase}/api/login`;
+  return `<!doctype html>
 <html lang="id">
 <head>
   <meta charset="utf-8">
@@ -147,7 +135,7 @@ export async function GET(req: NextRequest) {
   </style>
 </head>
 <body>
-  <form class="card" method="POST" action="/api/login" autocomplete="off">
+  <form class="card" method="POST" action="${esc(loginUrl)}" autocomplete="off">
     <h1>Login Jaringan Sekolah</h1>
     <p>Isi data berikut untuk mengakses internet.</p>
     <label for="studentId">NIS / Student ID</label>
@@ -164,12 +152,50 @@ export async function GET(req: NextRequest) {
   </form>
 </body>
 </html>`;
+}
 
-  return new Response(html, {
-    status: 200,
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-      "Cache-Control": "no-store",
-    },
-  });
+export async function GET(req: NextRequest) {
+  const u = req.nextUrl;
+  const mac = safeNormalize(u.searchParams.get("mac")) ?? "";
+  const ip = u.searchParams.get("ip") ?? "";
+  const target = u.searchParams.get("target") ?? "";
+  const portalBase = portalPublicBase(req);
+
+  if (mac) {
+    const device = await db.device.findUnique({
+      where: { macAddress: mac },
+      include: {
+        student: { select: { status: true, studentId: true, nama: true, kelas: true } },
+      },
+    }).catch(() => null);
+
+    if (device?.student) {
+      const { student } = device;
+
+      const currentDevice = device;
+      if (shouldBlockPortalAccess(student.status, currentDevice)) {
+        return NextResponse.redirect(portalUrl("/api/denied", req));
+      }
+
+      if (device.approved && student.status === "ACTIVE") {
+        return htmlResponse(buildApprovedPage(resolveContinueUrl(target)));
+      }
+
+      if (student.status === "PENDING" || !device.approved) {
+        return htmlResponse(
+          buildWaitingPage({
+            studentId: student.studentId,
+            nama: student.nama,
+            kelas: student.kelas,
+            mac,
+            ip,
+            target,
+            portalBase,
+          }),
+        );
+      }
+    }
+  }
+
+  return htmlResponse(buildLoginPage(mac, ip, target, portalBase));
 }

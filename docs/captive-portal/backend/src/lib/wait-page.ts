@@ -11,11 +11,15 @@ export type WaitPageFields = {
   mac: string;
   ip: string;
   target: string;
+  portalBase: string;
 };
 
 /** HTML page that polls /api/status and auto-submits login when student+device are ready. */
 export function buildWaitingPage(fields: WaitPageFields): string {
-  const { studentId, nama, kelas, mac, ip, target } = fields;
+  const { studentId, nama, kelas, mac, ip, target, portalBase } = fields;
+  const loginUrl = `${portalBase}/api/login`;
+  const statusUrl = `${portalBase}/api/status`;
+  const deniedUrl = `${portalBase}/api/denied`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Waiting for approval…</title>
@@ -32,7 +36,7 @@ h1{font-size:20px;margin:0 0 12px}p{color:#475569;line-height:1.5;margin:0 0 12p
 <p>Your registration is awaiting administrator approval.</p>
 <p>This page will automatically connect you once approved.</p>
 <p style="margin-top:16px"><span class="dot"></span><span class="dot"></span><span class="dot"></span></p>
-<form id="f" method="POST" action="/api/login" style="display:none">
+<form id="f" method="POST" action="${esc(loginUrl)}" style="display:none">
   <input name="studentId" value="${esc(studentId)}">
   <input name="nama" value="${esc(nama)}">
   <input name="kelas" value="${esc(kelas)}">
@@ -43,12 +47,14 @@ h1{font-size:20px;margin:0 0 12px}p{color:#475569;line-height:1.5;margin:0 0 12p
 <script>
 (function(){
   var mac=encodeURIComponent("${esc(mac)}");
+  var statusUrl=${JSON.stringify(statusUrl)};
+  var deniedUrl=${JSON.stringify(deniedUrl)};
   function check(){
-    fetch("/api/status?mac="+mac,{cache:"no-store"})
+    fetch(statusUrl+"?mac="+mac,{cache:"no-store"})
       .then(function(r){return r.json();})
       .then(function(d){
         if(d.ready){document.getElementById("f").submit();return;}
-        if(d.studentStatus==="DENIED"){window.location.href="/api/denied";return;}
+        if(d.studentStatus==="DENIED"){window.location.href=deniedUrl;return;}
         setTimeout(check,4000);
       })
       .catch(function(){setTimeout(check,6000);});
