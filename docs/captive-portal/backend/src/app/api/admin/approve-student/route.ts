@@ -50,13 +50,15 @@ export async function POST(req: NextRequest) {
       where: { id: firstDevice.id },
       data: { approved: true, reason: null, ...(hostname ? { hostname } : {}) },
     });
-    void approveDevice(student.studentId, mac).catch(async (err) => {
-      console.error("approve-student auto device approve failed", err);
+    try {
+      await approveDevice(student.studentId, mac);
+    } catch (err) {
+      console.error("approve-student auto hotspot-user sync failed", err);
       await db.device.update({
         where: { id: firstDevice.id },
         data: { approved: false, reason: "router-bind-failed" },
       }).catch(() => {});
-    });
+    }
   }
 
   return NextResponse.json({ ok: true, autoApprovedDevice: !!firstDevice, reapproved: wasDenied });

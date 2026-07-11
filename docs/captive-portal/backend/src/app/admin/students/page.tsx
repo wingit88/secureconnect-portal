@@ -2,6 +2,12 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+function getStatusClass(status: Student["status"]) {
+  if (status === "ACTIVE") return "text-green-700";
+  if (status === "DENIED") return "text-red-700";
+  return "text-amber-700";
+}
+
 type Device = { id: string; macAddress: string; hostname: string | null; approved: boolean; reason: string | null };
 type Student = {
   id: string;
@@ -11,6 +17,11 @@ type Student = {
   status: "PENDING" | "ACTIVE" | "DENIED";
   createdAt: string;
   devices: Device[];
+};
+
+type ActionPayload = {
+  deviceId?: string;
+  studentId?: string;
 };
 
 export default function StudentsPage() {
@@ -31,9 +42,29 @@ export default function StudentsPage() {
   }
   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
 
-  async function act(path: string, payload: object) {
+  async function act(path: string, payload: ActionPayload) {
     const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-    if (!res.ok) alert(await res.text()); else load();
+    if (!res.ok) {
+      alert(await res.text());
+      return;
+    }
+
+    const data = await res.json().catch(() => null);
+    if (data?.ok) {
+      setStudents((prev) => prev.map((student) => {
+        if (student.studentId !== payload.studentId) return student;
+        if (path.includes("approve-student")) {
+          return { ...student, status: "ACTIVE" as const };
+        }
+        if (path.includes("deny-student") || path.includes("revoke")) {
+          return { ...student, status: "DENIED" as const, devices: student.devices.map((device) => ({ ...device, approved: false, reason: "revoked-by-admin" })) };
+        }
+        return student;
+      }));
+      return;
+    }
+
+    await load();
   }
 
   function handleDelete(studentId: string) {
@@ -87,9 +118,7 @@ export default function StudentsPage() {
                   </td>
                   <td className="p-3">{s.nama || <span className="text-slate-400">—</span>}</td>
                   <td className="p-3">{s.kelas || <span className="text-slate-400">—</span>}</td>
-                  <td className="p-3"><span className={
-                    s.status === "ACTIVE" ? "text-green-700" : s.status === "DENIED" ? "text-red-700" : "text-amber-700"
-                  }>{s.status}</span></td>
+                  <td className="p-3"><span className={getStatusClass(s.status)}>{s.status}</span></td>
                   <td className="p-3">
                     {s.devices.length === 0 ? (
                       <span className="text-slate-400">none</span>

@@ -22,6 +22,11 @@ type Student = {
   devices: Device[];
 };
 
+type ActionPayload = {
+  deviceId?: string;
+  studentId?: string;
+};
+
 function deviceStatus(d: Device, studentStatus: Student["status"]): { label: string; className: string } {
   if (d.approved) return { label: "Approved", className: "text-green-700" };
   if (d.reason === "revoked-by-admin") return { label: "Revoked", className: "text-red-700" };
@@ -35,7 +40,10 @@ export default function StudentDetailPage() {
   const router = useRouter();
   const [student, setStudent] = useState<Student | null>(null);
   const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editMode, setEditMode] = useState(false);
+  const [editValues, setEditValues] = useState({ studentId: "", nama: "", kelas: "" });
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -58,7 +66,16 @@ export default function StudentDetailPage() {
     void load();
   }, [id, load]);
 
-  async function act(path: string, payload: object, opts?: { redirect?: string }) {
+  useEffect(() => {
+    if (!student) return;
+    setEditValues({
+      studentId: student.studentId,
+      nama: student.nama,
+      kelas: student.kelas,
+    });
+  }, [student]);
+
+  async function act(path: string, payload: ActionPayload, opts?: { redirect?: string }) {
     const res = await fetch(path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -73,6 +90,29 @@ export default function StudentDetailPage() {
       return;
     }
     await load();
+  }
+
+  async function handleSaveDetails() {
+    if (!student) return;
+    setSaving(true);
+    setError(null);
+
+    const res = await fetch(`/api/admin/students/${encodeURIComponent(student.id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(editValues),
+    });
+    const data = await res.json().catch(() => null);
+
+    if (!res.ok) {
+      setError(data?.message ?? "Unable to update student details.");
+      setSaving(false);
+      return;
+    }
+
+    setStudent((prev) => prev ? { ...prev, ...data.student } : prev);
+    setEditMode(false);
+    setSaving(false);
   }
 
   if (!id) {
@@ -104,9 +144,9 @@ export default function StudentDetailPage() {
       <div className="bg-white border border-slate-200 rounded-lg p-5 space-y-3">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="text-xl font-semibold font-mono">{student.studentId}</h1>
+            <h1 className="text-xl font-semibold font-mono">{student.nama}</h1>
             <p className="text-sm text-slate-700 mt-1">
-              {student.nama || "—"} · {student.kelas || "—"}
+              {student.studentId || "—"} · {student.kelas || "—"}
             </p>
             <p className="text-sm text-slate-500 mt-1">
               Registered {new Date(student.createdAt).toLocaleString()}
@@ -126,6 +166,12 @@ export default function StudentDetailPage() {
         </p>
 
         <div className="flex flex-wrap gap-2 pt-1">
+          {student.status === "ACTIVE" && !editMode && (
+            <button
+              onClick={() => setEditMode(true)}
+              className="px-3 py-1.5 text-sm bg-slate-700 text-white rounded-md"
+            >Edit details</button>
+          )}
           {student.status === "PENDING" && (
             <>
               <button
@@ -162,6 +208,49 @@ export default function StudentDetailPage() {
           >Delete student</button>
         </div>
       </div>
+
+      {student.status === "ACTIVE" && editMode && (
+        <div className="bg-white border border-slate-200 rounded-lg p-5 space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="font-medium">Edit student details</h2>
+            <button onClick={() => setEditMode(false)} className="text-sm text-slate-600 hover:text-slate-900">Cancel</button>
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            <label className="text-sm text-slate-700">
+              <span className="mb-1 block">Student ID</span>
+              <input
+                value={editValues.studentId}
+                onChange={(e) => setEditValues((prev) => ({ ...prev, studentId: e.target.value }))}
+                className="w-full rounded-md border border-slate-300 px-3 py-2"
+              />
+            </label>
+            <label className="text-sm text-slate-700">
+              <span className="mb-1 block">Nama</span>
+              <input
+                value={editValues.nama}
+                onChange={(e) => setEditValues((prev) => ({ ...prev, nama: e.target.value }))}
+                className="w-full rounded-md border border-slate-300 px-3 py-2"
+              />
+            </label>
+            <label className="text-sm text-slate-700">
+              <span className="mb-1 block">Kelas</span>
+              <input
+                value={editValues.kelas}
+                onChange={(e) => setEditValues((prev) => ({ ...prev, kelas: e.target.value }))}
+                className="w-full rounded-md border border-slate-300 px-3 py-2"
+              />
+            </label>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={handleSaveDetails}
+              disabled={saving}
+              className="px-3 py-1.5 text-sm bg-green-600 text-white rounded-md disabled:opacity-50"
+            >{saving ? "Saving…" : "Save changes"}</button>
+            <button onClick={() => setEditMode(false)} className="px-3 py-1.5 text-sm border border-slate-300 rounded-md">Cancel</button>
+          </div>
+        </div>
+      )}
 
       <div className="bg-white border border-slate-200 rounded-lg overflow-x-auto">
         <div className="px-4 py-3 border-b border-slate-100 bg-slate-50">

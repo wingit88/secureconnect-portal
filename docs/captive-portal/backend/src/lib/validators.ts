@@ -27,7 +27,10 @@ export const loginSchema = z.object({
   kelas: kelasSchema,
   mac: macSchema,
   ip: ipSchema,
-  target: z.string().url().optional(),
+  target: z.preprocess(
+    (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+    z.string().url().optional(),
+  ),
   reason: z.string().trim().max(500).optional(),
 });
 

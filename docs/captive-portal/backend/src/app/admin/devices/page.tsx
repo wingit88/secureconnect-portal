@@ -11,6 +11,11 @@ type Row = {
   student: { id: string; studentId: string; nama: string; kelas: string; status: string };
 };
 
+type ActionPayload = {
+  deviceId?: string;
+  studentId?: string;
+};
+
 export default function DevicesPage() {
   const [rows, setRows] = useState<Row[]>([]);
   const [busy, setBusy] = useState(false);
@@ -35,9 +40,24 @@ export default function DevicesPage() {
   }
   useEffect(() => { load(); }, []);
 
-  async function act(path: string, payload: object) {
+  async function act(path: string, payload: ActionPayload) {
     const res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-    if (!res.ok) alert(await res.text()); else load();
+    if (!res.ok) {
+      alert(await res.text());
+      return;
+    }
+
+    if (path.includes("approve-device")) {
+      setRows((prev) => prev.filter((row) => row.id !== payload.deviceId));
+      return;
+    }
+
+    if (path.includes("reject-device")) {
+      setRows((prev) => prev.filter((row) => row.id !== payload.deviceId));
+      return;
+    }
+
+    await load();
   }
 
   function handleReject(deviceId: string, mac: string) {

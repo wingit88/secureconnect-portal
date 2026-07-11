@@ -1,4 +1,5 @@
-// Eager patch for node-routeros Channel to treat !empty as a normal empty result.
+// Eager patch for node-routeros to tolerate late or orphaned replies that can
+// otherwise surface as UNREGISTEREDTAG and abort the connection.
 // Import this very early (middleware.ts) so the handler is in place before any
 // RouterOS connection is opened.
 
@@ -32,14 +33,42 @@ function applyEmptyPatch(): void {
 
     const proto = (Channel as { prototype: { onUnknown?: (reply: string) => void } }).prototype;
     const origOnUnknown = proto.onUnknown;
+
     proto.onUnknown = function (reply: string): void {
       if (reply === "!empty") {
         try { (this as { emit: (e: string, d: unknown[]) => void }).emit("done", []); } catch { /* ignore */ }
-        try { (this as { close: () => void }).close(); } catch { /* ignore */ }
         return;
       }
       if (origOnUnknown) origOnUnknown.call(this, reply);
     };
+
+    try {
+      // @ts-ignore — require is available at runtime in Next.js server bundles
+      const ReceiverMod = require("node-routeros/dist/connector/Receiver");
+      const Receiver = (ReceiverMod as { Receiver?: { prototype: { sendTagData?: (currentTag: string) => void } } }).Receiver;
+      if (Receiver?.prototype?.sendTagData) {
+        const origSendTagData = Receiver.prototype.sendTagData;
+        Receiver.prototype.sendTagData = function (currentTag: string): void {
+          try {
+            if (origSendTagData) {
+              origSendTagData.call(this, currentTag);
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (msg.includes("UNREGISTEREDTAG")) {
+              try {
+                (this as { cleanUp?: () => void }).cleanUp?.();
+              } catch { /* ignore */ }
+              return;
+            }
+            console.warn("[mikrotik-patch] receiver sendTagData failed", err);
+          }
+        };
+      }
+    } catch {
+      // best effort for older package layouts
+    }
+
     patched = true;
   } catch {
     // Avoid throwing during server startup; mikrotik.ts logs if commands fail.
